@@ -1,0 +1,15 @@
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Generated data and reports
+data/
+reports/
