@@ -13,3 +13,8 @@ __pycache__/
 # Generated data and reports
 data/
 reports/
+
+# Build and tooling
+.ruff_cache/
+dist/
+*.egg-info/

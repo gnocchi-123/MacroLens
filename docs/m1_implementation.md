@@ -1,0 +1,94 @@
+# M1 구현 기록
+
+기준: main의 M0 병합 커밋 `705d6357549a38f357be8d32339d69482c194087` 및 plan/context v2.
+문서 8절의 첫 단계(작은 동작 버전)를 M1 범위로 삼았습니다.
+
+## 구현 범위와 선택
+
+- 기존 `src/macrolens` 패키지를 유지합니다. 설계 예시의 `macro_sector`로 이름을 바꾸지 않습니다.
+- Python 3.14.2를 `.python-version`으로 고정합니다. 코드의 지원 범위는 3.12~3.14입니다.
+- 네 지표의 작은 계산은 표준 라이브러리 `urllib`, `statistics`, `json`으로 충분하므로
+  pandas·NumPy·httpx·YAML은 후속 규모 확장 때 도입합니다. 이는 계획의 기술 선택안에 대한
+  M1 구현 결정입니다. `pyproject.toml`과 `uv.lock`으로 개발 도구를 고정합니다.
+- 연구 계수가 준비되지 않았으므로 A/B/C라는 가상 섹터만 사용합니다.
+  실제 섹터나 ETF에 임의의 계수를 붙이지 않습니다. 연구용 모델 선택 옵션은 없습니다.
+- 한 명령 `python -m macrolens weekly`로 원본·JSON 결과·한국어 보고서를 만듭니다.
+  기본 모드는 sample이며 실제 API 사용은 `--mode fred`로 명시합니다.
+
+## 계산 규칙
+
+| 지표 | 변환 | 이전 변환값 표준화 창 | 잠정 지연 한도 |
+| --- | --- | ---: | ---: |
+| INDPRO | 정확히 12개월 전 대비 증가율(%) | 60개 | 관측 월 1일부터 75일 |
+| UNRATE | 정확히 3개월 전과의 차이에 -1(%포인트) | 60개 | 관측 월 1일부터 75일 |
+| CPIAUCSL | 정확히 12개월 전 대비 증가율(%) | 60개 | 관측 월 1일부터 75일 |
+| DGS10 | 28달력일 전까지 마지막 유효 값과의 차이(%포인트) | 1,260개 | 관측일부터 7일 |
+
+금리 비교 기준일에 값이 없으면 그 이전 최대 7일 안의 유효 값을 사용합니다.
+28개 행 전이나 28거래일 전을 사용하는 것이 아닙니다. 월별 자료는 누락 월을 건너뛰어
+행 위치로 전년/3개월 전을 찾지 않습니다. 일별 `.` 값은 휴일 등의 결측일 수 있어 제외하되
+마지막 유효 값의 지연 한도를 확인합니다. 월별 최신 값 누락은 즉시 보류합니다.
+
+표준화는 최신 관측을 제외한 이전 유효 변환값에 표본 표준편차(ddof=1)를 적용합니다.
+z값을 ±3으로 자르고 3으로 나눕니다. 이력 부족·표준편차 0·비유한 값·단위/빈도/계절조정
+불일치·지연·필수 변환 기준값 누락 시 전체 점수·순위를 보류합니다.
+최신 관측 이전의 변환 불가능한 관측은 창에 포함하지 않습니다.
+동점은 반올림 전 점수를 기준으로 공동 순위(1, 1, 3), 표시는 이름순입니다.
+
+## 시점과 보존의 한계
+
+실제 모드는 실행 시작 시 미국 중부시간 전일의 `realtime_start=end`를 지정합니다.
+메타데이터와 관측값 모두 같은 vintage로 조회합니다. `published_at=null`,
+`available_at=retrieved_at`으로 기록하여 수집 이후의 현재 진단에만 사용합니다.
+API의 `realtime_start`를 최초 발표일로 복사하지 않습니다.
+엄밀한 과거 재현 기능이 아니며 `strict_point_in_time=false`를 출력합니다.
+
+샘플의 이용 가능 시각은 월별 45일 후·일별 1일 후로 합성한 개발용 일정입니다.
+실제 발표 일정으로 사용하지 않습니다. 샘플의 수집 시각도 고정된 합성 메타데이터입니다.
+샘플 입력은 반복 실행 시 동일한 해시와 점수를 냅니다. 실행 ID·생성 시각은 달라집니다.
+
+새 실행마다 UUID가 포함된 디렉터리를 만들어 기존 원본·결과를 덮어쓰지 않습니다.
+완전한 장기 저장·복구·예약 작업 중복 제거는 후속입니다. `previous_run_id`는 현재 null입니다.
+JSON은 반올림 전 숫자를 보존하고 보고서만 표시 자릿수를 줄입니다.
+코드 버전에는 commit SHA와 작업 트리 수정 여부를 기록합니다.
+
+75일/7일은 **공식 발표 지연 규칙이 아닌 M1의 잠정 관측 나이 제한**입니다.
+정상 미발표와 예상 발표일 초과를 정교하게 구분하는 발표 달력은 아직 없습니다.
+수집 실패는 지표별 오류로 별도 기록하며 샘플이나 이전 데이터로 조용히 대체하지 않습니다.
+
+## 공식 자료 확인
+
+구현 시 아래 공식 메타데이터·API 문서를 확인하고, 실제 실행 때도 단위·빈도·계절조정을
+검사합니다. 메타데이터 및 원본 응답은 snapshot에 보존합니다.
+
+- [INDPRO](https://fred.stlouisfed.org/series/INDPRO): Index 2017=100, Monthly, SA.
+- [UNRATE](https://fred.stlouisfed.org/series/UNRATE): Percent, Monthly, SA.
+- [CPIAUCSL](https://fred.stlouisfed.org/series/CPIAUCSL): Index 1982-1984=100, Monthly, SA.
+- [DGS10](https://fred.stlouisfed.org/series/DGS10): Percent, Daily, NSA.
+- [FRED series API](https://fred.stlouisfed.org/docs/api/fred/series.html)
+- [FRED observations API](https://fred.stlouisfed.org/docs/api/fred/series_observations.html)
+- [FRED API key](https://fred.stlouisfed.org/docs/api/api_key.html)
+- [FRED 이용 조건](https://fred.stlouisfed.org/legal/): 개인 연구용 수집·출처 보존을 전제로 합니다.
+  생성 원본과 보고서는 Git에서 제외합니다. 별도 배포 전 각 지표의 권리·조건을 확인합니다.
+- [uv lock/sync](https://docs.astral.sh/uv/concepts/projects/sync/)
+
+## 검증 및 다음 단계
+
+2026-10-05 구현 환경의 Python 3.14.2에서 `pytest -q` 30개 통과,
+`ruff check .` 및 `ruff format --check .` 통과, sample CLI의 JSON·Markdown 생성 확인.
+실제 FRED 키를 사용한 수집은 실행하지 않았습니다.
+
+테스트는 손계산 가능한 65점 예시, 기여도 합·범위·동점, 표본 표준편차·절단,
+월 달력/28일 차이, 미래 이용 시각 차단, 누락·지연·이력 부족,
+API 응답 검증·키 비노출, 전체 샘플 실행과 재실행 보존을 다룹니다.
+실제 키로 수집하는 검증은 Codespaces에서 별도로 수행해야 합니다.
+
+M2: 과거 vintage·발표/이용 시각 모델, 원본 버전·실행 이력 조회, 전주 비교.
+이후: 근거 있는 11개 섹터 계수표, 가격/거래/백테스트, HTML/추세 보고서, 자동화.
+
+다음 요청 예시:
+
+> docs의 plan/context v2와 m1_implementation.md를 읽고 M2를 구현해줘.
+> 기존 M1 테스트와 샘플/실제 자료 구분을 유지하고, 과거 시점별 입력 선택·원본 버전·
+> 실행 이력·전주 비교를 별도 브랜치에서 구현해줘. 비교 불가 사유와 미래 정보 차단을
+> 검증하고 Codespaces 실행 명령을 안내해줘.
