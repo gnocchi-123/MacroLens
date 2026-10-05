@@ -14,7 +14,9 @@ from macrolens.ingest import SAMPLE_AS_OF, DataError, fred_snapshot, parse_rows,
 
 def test_fred_request_and_dot_missing(monkeypatch):
     def open_fake(request, timeout):
-        params = parse_qs(urlparse(request.full_url).query)
+        # 사용자 지정 헤더가 없는 URL 문자열로 요청해야 한다.
+        assert isinstance(request, str)
+        params = parse_qs(urlparse(request).query)
         assert params["api_key"] == ["not-a-real-key"]
         assert params["file_type"] == ["json"]
         assert timeout == 30

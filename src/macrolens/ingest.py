@@ -10,7 +10,7 @@ from http.client import HTTPException
 from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 from .config import INDICATORS
@@ -96,8 +96,8 @@ def request_json(endpoint, params, api_key):
         + urlencode({**params, "api_key": api_key, "file_type": "json"})
     )
     try:
-        request = Request(url, headers={"User-Agent": "MacroLens/0.1 (personal research)"})
-        with urlopen(request, timeout=30) as response:
+        # Codespaces에서 확인된 Python 기본 User-Agent를 사용한다.
+        with urlopen(url, timeout=30) as response:
             result = json.load(response)
     except HTTPError as exc:
         # HTTP 오류 본문/URL에는 API 키가 포함될 수 있어 출력하거나 저장하지 않는다.
