@@ -81,7 +81,7 @@ def test_live_pipeline_with_fake_api_and_no_sample_fallback(monkeypatch):
     snapshot = fred_snapshot("test-key")
     assert snapshot["mode"] == "fred"
     assert "UNRATE" not in snapshot["series"]
-    assert snapshot["errors"]["UNRATE"] == "수집 실패"
+    assert snapshot["errors"]["UNRATE"] == "메타데이터: 수집 실패"
     assert "test-key" not in json.dumps(snapshot)
     result = build_result(snapshot, "test")
     assert result["status"] == "held"
@@ -121,3 +121,52 @@ def test_complete_fred_pipeline_with_synthetic_api_responses(monkeypatch):
     assert all(
         item["observation"]["published_at"] is None for item in result["indicators"].values()
     )
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("timeout", "시간 초과"),
+        ("dns", "DNS"),
+        ("certificate", "인증서"),
+        ("reset", "연결 거부·중단"),
+        ("json", "JSON"),
+    ],
+)
+def test_detailed_errors_do_not_expose_secrets(monkeypatch, kind, expected):
+    import socket
+    import ssl
+
+    secret = "never-print-this-key"
+
+    def fake_open(*args, **kwargs):
+        if kind == "json":
+            return io.BytesIO(b"<html>never-print-this-key</html>")
+        reason = {
+            "timeout": TimeoutError(secret),
+            "dns": socket.gaierror(secret),
+            "certificate": ssl.SSLCertVerificationError(secret),
+            "reset": ConnectionResetError(secret),
+        }[kind]
+        raise URLError(reason)
+
+    from urllib.error import URLError
+
+    monkeypatch.setattr(ingest, "urlopen", fake_open)
+    with pytest.raises(DataError) as error:
+        request_json("series", {}, secret)
+    assert expected in str(error.value)
+    assert secret not in str(error.value)
+
+
+def test_progress_names_failed_stage_without_key(monkeypatch, capsys):
+    def fake_request(endpoint, params, key):
+        raise DataError("FRED 시간 초과")
+
+    monkeypatch.setattr(ingest, "request_json", fake_request)
+    snapshot = fred_snapshot("test-secret")
+    output = capsys.readouterr().err
+    assert "[1/4] INDPRO 메타데이터 요청 중" in output
+    assert "[4/4] DGS10 실패" in output
+    assert "test-secret" not in output
+    assert "메타데이터: FRED 시간 초과" == snapshot["errors"]["INDPRO"]

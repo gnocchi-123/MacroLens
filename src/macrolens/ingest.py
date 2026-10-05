@@ -2,8 +2,12 @@
 
 import json
 import math
+import socket
+import ssl
+import sys
 from datetime import UTC, date, datetime, timedelta
 from http.client import HTTPException
+from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -68,6 +72,22 @@ def sample_snapshot():
     return {"mode": "sample", "as_of": SAMPLE_AS_OF.isoformat(), "series": series, "errors": {}}
 
 
+def connection_error(error):
+    """예외 문자열/URL/본문을 출력하지 않고 원인 종류만 분류한다."""
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "FRED 시간 초과: 연결 또는 응답 읽기 대기(30초 설정)"
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return "FRED TLS 인증서 검증 실패"
+    if isinstance(reason, ssl.SSLError):
+        return "FRED TLS 연결 오류"
+    if isinstance(reason, socket.gaierror):
+        return "FRED DNS 이름 해석 실패"
+    if isinstance(reason, ConnectionError):
+        return "FRED 연결 거부·중단 오류"
+    return "FRED 통신 오류: " + type(reason).__name__
+
+
 def request_json(endpoint, params, api_key):
     url = (
         "https://api.stlouisfed.org/fred/"
@@ -82,8 +102,10 @@ def request_json(endpoint, params, api_key):
     except HTTPError as exc:
         # HTTP 오류 본문/URL에는 API 키가 포함될 수 있어 출력하거나 저장하지 않는다.
         raise DataError(f"FRED HTTP {exc.code}: 키·사용량·요청을 확인하세요.") from None
-    except (URLError, TimeoutError, OSError, ValueError, HTTPException):
-        raise DataError("FRED 연결 또는 JSON 응답 오류. 네트워크를 확인하세요.") from None
+    except (URLError, TimeoutError, OSError, HTTPException) as exc:
+        raise DataError(connection_error(exc)) from None
+    except (ValueError, UnicodeError):
+        raise DataError("FRED 응답을 JSON으로 해석할 수 없음 (본문은 비공개)") from None
     if not isinstance(result, dict) or "error_code" in result:
         raise DataError("FRED 응답 형식 또는 API 오류.")
     return result
@@ -111,6 +133,9 @@ def parse_rows(payload, retrieved_at, vintage):
 def fred_snapshot(api_key):
     if not api_key or not api_key.strip():
         raise DataError("FRED_API_KEY 환경변수를 설정하세요. 키를 대화에 붙여 넣지 마세요.")
+    api_key = api_key.strip()
+    if any(character.isspace() for character in api_key):
+        raise DataError("API 키 안에 공백/줄바꿈이 있습니다. 키만 다시 입력하세요.")
     # 장중 발표시각을 아는 척하지 않도록 미국 중부시간 전일까지의 vintage만 요청한다.
     started = datetime.now(UTC)
     vintage = (
@@ -118,12 +143,21 @@ def fred_snapshot(api_key):
     ).isoformat()
     start = (date.fromisoformat(vintage) - timedelta(days=365 * 10)).isoformat()
     series, errors = {}, {}
-    for sid in INDICATORS:
+    for index, sid in enumerate(INDICATORS, 1):
+        stage = "메타데이터"
+        timer = monotonic()
+
+        def progress(message):
+            print(f"[{index}/{len(INDICATORS)}] {sid} {message}", file=sys.stderr, flush=True)
+
+        progress("메타데이터 요청 중 (연결/읽기 타임아웃 30초)")
         params = {"series_id": sid, "realtime_start": vintage, "realtime_end": vintage}
         try:
             metadata = request_json("series", params, api_key)["seriess"][0]
             if metadata["id"] != sid:
                 raise DataError("FRED 지표 ID 불일치.")
+            stage = "관측값"
+            progress("관측값 요청 중 (최근 약 10년)")
             payload = request_json(
                 "series/observations",
                 {
@@ -144,10 +178,15 @@ def fred_snapshot(api_key):
                 "observations": parse_rows(payload, retrieved, vintage),
                 "raw_response": payload,
             }
+            progress(
+                f"수집 완료: {len(series[sid]['observations'])}개 / {monotonic() - timer:.1f}초"
+            )
         except DataError as exc:
-            errors[sid] = str(exc)
+            errors[sid] = f"{stage}: {exc}"
+            progress(f"실패 / {monotonic() - timer:.1f}초 / {errors[sid]}")
         except (KeyError, IndexError, TypeError, ValueError, OverflowError):
-            errors[sid] = "FRED 응답 필드 또는 날짜/숫자 형식 오류."
+            errors[sid] = f"{stage}: FRED 응답 필드 또는 날짜/숫자 형식 오류."
+            progress(f"실패 / {monotonic() - timer:.1f}초 / {errors[sid]}")
     return {
         "mode": "fred",
         "as_of": datetime.now(UTC).isoformat(),
