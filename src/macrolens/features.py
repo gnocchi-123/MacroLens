@@ -2,7 +2,7 @@
 
 import math
 from bisect import bisect_right
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from statistics import mean, stdev
 
 from .ingest import DataError, month_shift
@@ -58,23 +58,42 @@ def transform_values(values, transform):
     return transformed
 
 
+def eligible_rows(series, as_of):
+    from .snapshots import instant
+
+    as_of = instant(as_of)
+    eligible = {}
+    for row in series["observations"]:
+        day = date.fromisoformat(row["observation_date"])
+        available = instant(row["available_at"])
+        if available > as_of or day > as_of.date():
+            continue
+        vintage = row.get("vintage_date")
+        if vintage and not vintage.startswith("synthetic"):
+            if date.fromisoformat(vintage) > as_of.date():
+                continue
+            for key in ("realtime_start", "realtime_end"):
+                if row.get(key):
+                    boundary = date.fromisoformat(row[key])
+                    if (key == "realtime_start" and boundary > date.fromisoformat(vintage)) or (
+                        key == "realtime_end" and boundary < date.fromisoformat(vintage)
+                    ):
+                        raise DataError("요청 vintage와 관측 버전 불일치")
+        if day in eligible:
+            raise DataError("같은 관측일의 중복 버전: 모호한 입력")
+        eligible[day] = row
+    return [eligible[day] for day in sorted(eligible)]
+
+
 def calculate_feature(series, spec, as_of):
     for key in ("units", "frequency", "seasonal_adjustment"):
         if series["metadata"].get(key) != spec[key]:
             raise DataError(f"메타데이터 불일치: {key}")
-    eligible = {}
-    for row in series["observations"]:
-        day = date.fromisoformat(row["observation_date"])
-        available = datetime.fromisoformat(row["available_at"])
-        if available.tzinfo is None:
-            raise DataError("시간대 없는 이용 가능 시각")
-        if available > as_of or day > as_of.date():
-            continue
-        if day in eligible:
-            raise DataError("같은 관측일의 중복 버전: M2 시점 선택 필요")
-        if spec["frequency"] == "Monthly" and day.day != 1:
-            raise DataError("월별 관측일 형식 불일치")
-        eligible[day] = row
+    eligible = {
+        date.fromisoformat(row["observation_date"]): row for row in eligible_rows(series, as_of)
+    }
+    if spec["frequency"] == "Monthly" and any(day.day != 1 for day in eligible):
+        raise DataError("월별 관측일 형식 불일치")
     if not eligible:
         raise DataError("이용 가능한 관측 없음")
     if spec["frequency"] == "Monthly" and eligible[max(eligible)]["value"] is None:

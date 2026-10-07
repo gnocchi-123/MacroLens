@@ -26,11 +26,15 @@ def test_sample_end_to_end_and_no_overwrite(tmp_path):
     assert results[0]["scores"] == results[1]["scores"]
 
 
-def test_no_key_fails_without_artifacts(tmp_path, monkeypatch, capsys):
+def test_no_key_preserves_failed_attempt(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("FRED_API_KEY", raising=False)
     assert main(["weekly", "--mode", "fred", "--output", str(tmp_path)]) == 1
     assert "FRED_API_KEY" in capsys.readouterr().err
-    assert not list(tmp_path.iterdir())
+    folder = next(tmp_path.iterdir())
+    status = json.loads((folder / "status.json").read_text())
+    assert status["status"] == "failed"
+    assert not (folder / "COMPLETE").exists()
+    assert not (folder / "result.json").exists()
 
 
 def test_held_outputs_report_and_exit_two(tmp_path, monkeypatch):
