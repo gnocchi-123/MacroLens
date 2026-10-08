@@ -4,7 +4,7 @@
 def markdown(result):
     label = "합성 샘플 — 실제 경제 자료 아님" if result["mode"] == "sample" else "FRED 실제 자료"
     lines = [
-        "# MacroLens M1 보고서",
+        "# MacroLens " + ("M2" if result.get("schema_version") == 2 else "M1") + " 보고서",
         "",
         f"**{label} / 미검증 연구용**",
         "",
@@ -20,7 +20,7 @@ def markdown(result):
         "| 지표 | 관측일 | 원래 값 | 변환값 | z값 | 요인값 | 상태 |",
         "| --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
-    for sid, item in result["indicators"].items():
+    for sid, item in sorted(result["indicators"].items()):
         if item["status"] != "valid":
             lines.append(f"| {sid} | — | — | — | — | — | 보류: {item['reason']} |")
         else:
@@ -53,7 +53,7 @@ def markdown(result):
             )
         lines += ["", "기여도 단위는 점입니다. 반올림 전 기여도 합 + 50 = 점수입니다."]
     lines += ["", "## 출처와 시점", ""]
-    for sid, item in result["indicators"].items():
+    for sid, item in sorted(result["indicators"].items()):
         if item["status"] == "valid":
             obs = item["observation"]
             lines += [
@@ -62,5 +62,79 @@ def markdown(result):
                 f"버전: {obs['vintage_date']}; 발표 시각: 미확인",
                 f"  - 규칙: {item['availability_policy']}",
             ]
+    if result.get("schema_version") == 2:
+        lines += [
+            "",
+            "## 실행 이력과 시점 적합성",
+            "",
+            f"- 실행 종류: {result.get('kind', '미기록')}; "
+            f"원본 연결: {result.get('parent_run_id') or '없음'}",
+            f"- 한국시간 주 시작일: {result['week_slot']}",
+            f"- 시점 상태: {result['point_in_time_status']}; 엄밀한 과거 검증용 유효성: false",
+            f"- 시점 규칙: {result['time_policy']}",
+        ]
+        if result.get("replay_verification"):
+            lines.append(f"- 저장 입력 재현: {result['replay_verification']} (외부 API 미사용)")
+        if result.get("kind") == "replay":
+            lines.append("- 전주 비교는 원본 실행에 저장된 당시 연결과 run_id를 유지합니다.")
+        history = result.get("history", {})
+        previous = history.get("previous_week")
+        lines += ["", "## 전주 비교", ""]
+        if previous:
+            lines += comparison_lines(previous)
+        else:
+            lines += ["전주 비교 없음"]
+            if history.get("last_available"):
+                lines += ["", "### 마지막 가용 기록과 별도 비교", ""]
+                lines += comparison_lines(history["last_available"])
+        lines += ["", *["- " + warning for warning in history.get("warnings", [])]]
+    else:
+        lines += [
+            "",
+            "## 실행 이력",
+            "",
+            "M1 기록: 선택 입력·전체 설정·주간 연결 미기록. 추정하지 않음.",
+        ]
     lines += ["", "## 한계", "", *[f"- {x}" for x in result["limitations"]], ""]
     return "\n".join(lines)
+
+
+def comparison_lines(comparison):
+    lines = [f"- 비교 실행: `{comparison['before_run_id']}` → `{comparison['after_run_id']}`"]
+    if "before_as_of" in comparison:
+        lines += [
+            f"- 실제 판단 시각: {comparison['before_as_of']} → {comparison['after_as_of']}",
+            f"- 실제 간격: {comparison['interval_days']:.6f}일",
+        ]
+    if comparison["status"] != "comparable":
+        return lines + ["- 비교 불가: " + "; ".join(comparison["reasons"])]
+    lines += [
+        "",
+        "| 지표 | 관측일 이전 → 이후 | 원래 값 차이 | 변환값 차이 | z 차이 | 요인 차이 |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for sid, item in sorted(comparison["indicators"].items()):
+        lines.append(
+            f"| {sid} | {item['before_observation_date']} → "
+            f"{item['after_observation_date']} | {item['raw_value_delta']:+.4f} | "
+            f"{item['transformed_value_delta']:+.4f} | {item['z_delta']:+.4f} | "
+            f"{item['value_delta']:+.4f} |"
+        )
+    lines += [
+        "",
+        "| 가상 섹터 | 이전 | 이후 | 차이(점) | 순위 개선 | 요인별 기여도 차이(점) |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for sector, item in sorted(comparison["sectors"].items()):
+        contribution = ", ".join(
+            f"{k} {v:+.4f}" for k, v in sorted(item["contribution_deltas"].items())
+        )
+        lines.append(
+            f"| {sector} | {item['before_score']:.4f} | {item['after_score']:.4f} | "
+            f"{item['score_delta']:+.4f} | {item['rank_improvement']:+d} | {contribution} |"
+        )
+    return lines + [
+        "",
+        "반올림 전 기여도 변화 합 = 점수 변화 (허용 오차 1e-9점). "
+        "순위 개선 = 이전 순위 − 이후 순위. 변화 원인의 인과 분해는 포함하지 않습니다.",
+    ]
