@@ -5,7 +5,9 @@ import math
 from .ingest import DataError
 
 
-def score_sectors(factors, coefficients):
+def score_sectors(factors, coefficients, *, ranking_policy="competition", tie_order=None):
+    if ranking_policy not in ("competition", "average"):
+        raise DataError("지원하지 않는 순위 규칙")
     if not factors or any(item["status"] != "valid" for item in factors.values()):
         return []
     if any(not math.isfinite(item["value"]) or abs(item["value"]) > 1 for item in factors.values()):
@@ -30,7 +32,25 @@ def score_sectors(factors, coefficients):
                 "contributions": contributions,
             }
         )
-    scores.sort(key=lambda item: (-item["score"], item["sector"]))
+    if tie_order is not None and set(tie_order) != set(coefficients):
+        raise DataError("동점 표시 순서와 섹터 구성 불일치")
+    scores.sort(
+        key=lambda item: (
+            -item["score"],
+            tie_order[item["sector"]] if tie_order is not None else item["sector"],
+        )
+    )
+    if ranking_policy == "average":
+        start = 0
+        while start < len(scores):
+            end = start + 1
+            while end < len(scores) and scores[end]["score"] == scores[start]["score"]:
+                end += 1
+            rank = (start + 1 + end) / 2
+            for item in scores[start:end]:
+                item["rank"] = rank
+            start = end
+        return scores
     # 공동 순위: 1, 1, 3. 부동소수점 값은 반올림 전 점수로 비교한다.
     for index, item in enumerate(scores):
         item["rank"] = (

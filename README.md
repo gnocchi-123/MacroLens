@@ -1,7 +1,8 @@
 # MacroLens
 
-미국 거시경제 기반 섹터 분석. **M2: 자료 시점·실행 이력·전주 비교**를 제공합니다.
-실행 확인용 가상 계수를 사용하며, 모든 출력은 **미검증 연구용**입니다.
+미국 거시경제 기반 섹터 분석. **M3: 11개 섹터 연구 점수**와 M2의 자료 시점·실행 이력·전주 비교를 제공합니다.
+기본 명령은 기존 가상 모델이며, `--model research-v1`으로 동결한 연구 가설 계수를 선택합니다.
+모든 출력은 **미검증 연구용**입니다.
 
 ## 빠른 시작 (Codespaces)
 
@@ -43,7 +44,7 @@ unset FRED_API_KEY
 - 수집: INDPRO, UNRATE, CPIAUCSL, DGS10의 메타데이터와 최근 10년 관측값.
 - 시점: 미국 중부시간 전일의 FRED vintage. 각 값은 실제 수집 시각부터 사용합니다.
 - 실제 발표 시각은 `null`입니다. `available_at`을 발표 시각으로 해석하지 않습니다.
-- 실제 입력을 사용해도 섹터 계수는 가상값입니다. 실제 섹터 추천은 아닙니다.
+- 기본 demo-v1은 가상 계수, research-v1은 미검증 정성 가설 계수입니다. 실제 자료 수집 성공이 투자 효용 검증을 뜻하지 않습니다.
 - 과거 조회는 아래 `--as-of` 명령을 사용합니다. 저장 입력 재현(`replay`)과 다릅니다.
 
 ## 산출물과 상태
@@ -68,12 +69,58 @@ unset FRED_API_KEY
 
 | 종료 코드 | 의미 | 확인할 것 |
 | --- | --- | --- |
-| 0 | 가상 점수·보고서 생성 성공 | `demo_complete`; 샘플/실제 모드 구분 |
+| 0 | 점수·보고서 생성 성공 | 가상 `demo_complete` / 연구 `research_complete`; 샘플/실제 구분 |
 | 1 | 키 미설정·저장 실패 등 | 터미널 오류와 환경변수·출력 경로 |
 | 2 | 점수·순위 보류 또는 두 실행 비교 불가 | 보고서 또는 비교 JSON의 사유 |
 
 HTTP 400/403은 키·권한, 429는 사용량, 연결 오류는 네트워크를 확인합니다.
 재실행은 새 기록을 만듭니다. 메타데이터가 바뀌면 설정을 검토하기 전 계산을 보류합니다.
+
+## M3: 11개 섹터 연구 모델
+
+[계수 근거서](docs/model_card.md), [동결 기록](docs/m3_freeze.md),
+[구현·검수 기록](docs/m3_implementation.md)을 먼저 확인하세요.
+`research-v1`은 경제적 정성 가설이며 실제 수익률로 추정하거나 검증한 모델이 아닙니다.
+`research_complete`는 계산 완료를 의미하며 투자 성과 검증 완료가 아닙니다.
+
+```bash
+uv sync --locked --inexact
+uv run --locked pytest -q
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+
+# 합성 자료로 11개 섹터 점수 계산 (API 키 불필요)
+uv run --locked python -m macrolens weekly --mode sample --model research-v1
+
+# 실제 FRED 자료 (기존 FRED_API_KEY 환경변수 필요)
+uv run --locked python -m macrolens weekly --mode fred --model research-v1
+```
+
+- 성공: `research_complete`, 11개 섹터와 네 요인의 기여도, 평균 순위.
+- 보류: `held`, 종료 코드 2. 계수가 0인 지표라도 네 활성 입력 중 하나가 무효이면 전체 보류.
+- `--model` 생략: 기존 `demo-v1`과 가상 A/B/C, `demo_complete` 유지.
+- 설정 JSON은 패키지의 `src/macrolens/models/research_v1.json`에 있습니다.
+  계수·근거 ID·요인 정의·시점 정책을 매 실행의 `config.json`에 함께 보존합니다.
+  동결 해시와 다른 설정은 실행 전에 거부합니다. 변경 실험은 새 버전으로 구현해야 합니다.
+- 정정/재수집은 원본 설정을 상속합니다. 다른 모델을 명시하면 거부합니다.
+  모델 변경은 원본을 수정하지 않고 별도의 새 실행으로 기록하세요.
+- `replay`는 저장 모델·입력만 사용합니다. M2 `m2-v1` 재현과 M1 읽기 호환을 유지합니다.
+- 같은 폴더에 가상/연구 실행을 저장할 수 있습니다. 자동 전주 연결은 모델 계열도 구분합니다.
+  서로 다른 모델/엔진/설정의 직접 비교는 수치 차이를 만들지 않고 비교 불가 사유를 표시합니다.
+- 평균 순위 예: 1·2위 동점은 각각 1.5위. 동점 표시는 GICS 코드 순이며 우열이 아닙니다.
+- `strict_point_in_time=false`, 샘플/실제 자료 구분, 미검증 표시를 유지합니다.
+
+아래 두 실행 후 출력된 실제 run_id로 기존 `compare`, `replay`, `report`를 사용합니다.
+
+```bash
+uv run --locked python -m macrolens weekly --mode sample --model research-v1 --as-of '2026-09-28T09:00:00+09:00'
+uv run --locked python -m macrolens weekly --mode sample --model research-v1 --as-of '2026-10-05T09:00:00+09:00'
+```
+
+정상 비교는 `comparable`, 재현은 `result.json`의 `replay_verification: matched`입니다.
+점수는 0~100이며 반올림 전 `50 + 기여도 합 = 점수`입니다.
+에너지의 높은 샘플 점수 등을 실제 추천으로 해석하지 마세요.
+가격·백테스트·포트폴리오 거래는 M4의 작업입니다.
 
 ## M2 명령
 
@@ -193,7 +240,8 @@ uv run --locked ruff format --check .
 | `src/macrolens/config.py` | 네 지표의 단위·빈도·변환·창·지연 한도와 가상 계수 |
 | `src/macrolens/ingest.py` | 합성 샘플 생성, FRED 메타데이터·원본 수집 |
 | `src/macrolens/features.py` | 시각 필터·지표 변환·표준화·자료 품질 검사 |
-| `src/macrolens/scoring.py` | 가상 점수·기여도·공동 순위 |
+| `src/macrolens/scoring.py` | 점수·기여도·가상 공동 순위/연구 평균 순위 |
+| `src/macrolens/research.py` | 연구 모델 동결 설정 검증·로딩 |
 | `src/macrolens/reporting.py` | 계산 결과로부터 한국어 Markdown 생성 |
 | `src/macrolens/cli.py` | 수집·조회·비교·재현·보고서 CLI |
 | `src/macrolens/storage.py` | 실행 보존·상태·무결성 검사·M1 읽기 |

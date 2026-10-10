@@ -34,7 +34,10 @@ def compare_loaded(before, after):
     ):
         if old.get(field) is None or old.get(field) != new.get(field):
             reasons.append(label + " 불일치 또는 미상")
-    if any(r.get("status") != "demo_complete" or not r.get("scores") for r in (old, new)):
+    if any(
+        r.get("status") not in ("demo_complete", "research_complete") or not r.get("scores")
+        for r in (old, new)
+    ):
         reasons.append("보류/실패한 실행 또는 유효 점수 없음")
     if set(old["indicators"]) != set(new["indicators"]):
         reasons.append("활성 지표 구성 불일치")
@@ -67,7 +70,7 @@ def compare_loaded(before, after):
         left_scores = {x["sector"]: x for x in old["scores"]}
         right_scores = {x["sector"]: x for x in new["scores"]}
         if left_scores.keys() != right_scores.keys():
-            raise DataError("가상 섹터 구성 불일치")
+            raise DataError("섹터 구성 불일치")
         for sector, left in left_scores.items():
             right = right_scores[sector]
             if left["contributions"].keys() != right["contributions"].keys():
@@ -131,7 +134,11 @@ def link_previous(root, current, started_at):
         if row["status"] == "unreadable":
             warnings.append(row["run_id"] + ": 손상/읽기 불가 기록 제외")
             continue
-        if row.get("schema_version") != 2 or row["status"] not in ("demo_complete", "held"):
+        if row.get("schema_version") != 2 or row["status"] not in (
+            "demo_complete",
+            "research_complete",
+            "held",
+        ):
             continue
         candidate = load_run(root, row["run_id"])
         other, record = candidate["result"], candidate["record"]
@@ -141,6 +148,8 @@ def link_previous(root, current, started_at):
         if record.get("kind") == "replay" or instant(record["started_at"]) >= instant(started_at):
             continue
         if any(other.get(k) != result.get(k) for k in ("mode", "time_policy")):
+            continue
+        if other.get("model_kind", "demo") != result.get("model_kind", "demo"):
             continue
         other_slot = week_slot(other["as_of"])
         if other_slot >= slot:
@@ -159,6 +168,8 @@ def link_previous(root, current, started_at):
         "last_available": None,
         "warnings": warnings,
     }
+    if result.get("model_kind") == "research":
+        links["selection_rule"] += "; 같은 연구 모델 계열 (버전 변경은 비교 불가 표시)"
     if prior:
         links["previous_week"] = compare_loaded(prior[1], current)
     elif representatives:
