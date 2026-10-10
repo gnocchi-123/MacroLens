@@ -169,7 +169,15 @@ def list_runs(root):
                 item.update(
                     {
                         k: result.get(k)
-                        for k in ("status", "as_of", "mode", "schema_version", "week_slot")
+                        for k in (
+                            "status",
+                            "as_of",
+                            "mode",
+                            "schema_version",
+                            "week_slot",
+                            "model_version",
+                            "model_kind",
+                        )
                     }
                 )
             elif (folder / "status.json").is_file():

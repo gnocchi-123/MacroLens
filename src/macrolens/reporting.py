@@ -2,13 +2,18 @@
 
 
 def markdown(result):
+    research = result.get("model_kind") == "research"
+    milestone = "M3" if research else "M2" if result.get("schema_version") == 2 else "M1"
     label = "합성 샘플 — 실제 경제 자료 아님" if result["mode"] == "sample" else "FRED 실제 자료"
     lines = [
-        "# MacroLens " + ("M2" if result.get("schema_version") == 2 else "M1") + " 보고서",
+        "# MacroLens " + milestone + " 보고서",
         "",
         f"**{label} / 미검증 연구용**",
         "",
-        "실행 확인용 가상 계수입니다. 실제 섹터 추천·확률·기대수익률이 아닙니다.",
+        "11개 미국 섹터의 정성 가설 계수입니다. "
+        "점수는 확률·기대수익률이 아니며 투자 효용은 미검증입니다."
+        if research
+        else "실행 확인용 가상 계수입니다. 실제 섹터 추천·확률·기대수익률이 아닙니다.",
         "",
         f"- 실행: `{result['run_id']}`",
         f"- 자료 기준: {result['as_of']}",
@@ -34,14 +39,16 @@ def markdown(result):
         "변환: INDPRO·CPI 전년 대비 %, UNRATE 3개월 차이의 음수(%포인트), "
         "DGS10 28일 차이(%포인트). 요인 양수는 과거 평균보다 높은 값입니다.",
         "",
-        "## 가상 섹터 점수",
+        "## 11개 섹터 연구 점수" if research else "## 가상 섹터 점수",
         "",
     ]
     if not result["scores"]:
         lines += ["입력 불완전: 모든 점수·순위를 보류합니다."]
     else:
         lines += [
-            "| 가상 섹터 | 순위 | 점수 | 성장 기여 | 고용 기여 | 물가 기여 | 금리 기여 |",
+            "| 섹터 | 순위 | 점수 | 성장 기여 | 고용 기여 | 물가 기여 | 금리 기여 |"
+            if research
+            else "| 가상 섹터 | 순위 | 점수 | 성장 기여 | 고용 기여 | 물가 기여 | 금리 기여 |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for item in result["scores"]:
@@ -52,6 +59,16 @@ def markdown(result):
                 f"{c['inflation']:+.2f} | {c['rates']:+.2f} |"
             )
         lines += ["", "기여도 단위는 점입니다. 반올림 전 기여도 합 + 50 = 점수입니다."]
+    if research:
+        lines += [
+            "",
+            f"- 계수 상태: {result['model_status']}; 동결 시각: {result['model_frozen_at']}",
+            f"- 설정 해시: `{result['config_hash']}`",
+            f"- 근거서: `{result['rationale_document']}` (저장소 기준)",
+            "- 평균 순위 사용. 동점 표시는 GICS 코드 순이며 우열을 뜻하지 않습니다.",
+            "- 계수 0은 영향 방향 유보입니다. 남은 계수의 절댓값 합으로 정규화합니다.",
+            "- 계수·정규화 비중·근거 ID는 config.json과 result.json에 보존합니다.",
+        ]
     lines += ["", "## 출처와 시점", ""]
     for sid, item in sorted(result["indicators"].items()):
         if item["status"] == "valid":
@@ -81,12 +98,12 @@ def markdown(result):
         previous = history.get("previous_week")
         lines += ["", "## 전주 비교", ""]
         if previous:
-            lines += comparison_lines(previous)
+            lines += comparison_lines(previous, research=research)
         else:
             lines += ["전주 비교 없음"]
             if history.get("last_available"):
                 lines += ["", "### 마지막 가용 기록과 별도 비교", ""]
-                lines += comparison_lines(history["last_available"])
+                lines += comparison_lines(history["last_available"], research=research)
         lines += ["", *["- " + warning for warning in history.get("warnings", [])]]
     else:
         lines += [
@@ -99,7 +116,7 @@ def markdown(result):
     return "\n".join(lines)
 
 
-def comparison_lines(comparison):
+def comparison_lines(comparison, *, research=False):
     lines = [f"- 비교 실행: `{comparison['before_run_id']}` → `{comparison['after_run_id']}`"]
     if "before_as_of" in comparison:
         lines += [
@@ -122,7 +139,9 @@ def comparison_lines(comparison):
         )
     lines += [
         "",
-        "| 가상 섹터 | 이전 | 이후 | 차이(점) | 순위 개선 | 요인별 기여도 차이(점) |",
+        "| 섹터 | 이전 | 이후 | 차이(점) | 순위 개선 | 요인별 기여도 차이(점) |"
+        if research
+        else "| 가상 섹터 | 이전 | 이후 | 차이(점) | 순위 개선 | 요인별 기여도 차이(점) |",
         "| --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for sector, item in sorted(comparison["sectors"].items()):
@@ -131,7 +150,7 @@ def comparison_lines(comparison):
         )
         lines.append(
             f"| {sector} | {item['before_score']:.4f} | {item['after_score']:.4f} | "
-            f"{item['score_delta']:+.4f} | {item['rank_improvement']:+d} | {contribution} |"
+            f"{item['score_delta']:+.4f} | {item['rank_improvement']:+g} | {contribution} |"
         )
     return lines + [
         "",

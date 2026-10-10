@@ -13,6 +13,7 @@ from .features import calculate_feature
 from .history import compare_runs, link_previous
 from .ingest import DataError, fred_snapshot, sample_snapshot
 from .reporting import markdown
+from .research import RESEARCH_ENGINE, research_configuration, validate_research
 from .scoring import score_sectors
 from .snapshots import ENGINE_VERSION, instant, select_inputs, time_policy, week_slot
 from .storage import (
@@ -47,7 +48,11 @@ def code_version():
         return {"commit_sha": None, "working_tree_dirty": None}
 
 
-def configuration():
+def configuration(model="demo-v1"):
+    if model == "research-v1":
+        return research_configuration()
+    if model != "demo-v1":
+        raise DataError("지원하지 않는 모델")
     return deepcopy(
         {"indicators": INDICATORS, "model": DEMO_MODEL, "engine_version": ENGINE_VERSION}
     )
@@ -55,6 +60,11 @@ def configuration():
 
 def build_result(snapshot, run_id, config=None, inputs=None):
     config = configuration() if config is None else config
+    research = config["engine_version"] == RESEARCH_ENGINE
+    if research:
+        validate_research(config)
+    elif config["engine_version"] != ENGINE_VERSION or config["model"].get("kind") == "research":
+        raise DataError("지원하지 않는 계산 엔진/모델 조합")
     inputs = select_inputs(snapshot, config["indicators"]) if inputs is None else inputs
     as_of = instant(inputs["as_of"])
     indicators, factors = {}, {}
@@ -70,8 +80,25 @@ def build_result(snapshot, run_id, config=None, inputs=None):
         indicators[sid] = item
         factors[spec["factor"]] = item
     model = config["model"]
-    scores = score_sectors(factors, model["sectors"])
-    return {
+    scores = score_sectors(
+        factors,
+        model["sectors"],
+        ranking_policy=model["ranking_policy"] if research else "competition",
+        tie_order={name: m["gics"] for name, m in model["sector_metadata"].items()}
+        if research
+        else None,
+    )
+    if research:
+        for item in scores:
+            weights = model["sectors"][item["sector"]]
+            denominator = sum(abs(x) for x in weights.values())
+            item.update(
+                **deepcopy(model["sector_metadata"][item["sector"]]),
+                coefficients=deepcopy(weights),
+                denominator=denominator,
+                normalized_weights={k: v / denominator for k, v in weights.items()},
+            )
+    result = {
         "schema_version": 2,
         "engine_version": config["engine_version"],
         "run_id": run_id,
@@ -82,7 +109,7 @@ def build_result(snapshot, run_id, config=None, inputs=None):
         "model_version": model["version"],
         "model_purpose": model["purpose"],
         "validation_status": "미검증 연구용",
-        "status": "demo_complete" if scores else "held",
+        "status": ("research_complete" if research else "demo_complete") if scores else "held",
         "strict_point_in_time": False,
         "time_policy": time_policy(inputs),
         "point_in_time_status": (
@@ -101,7 +128,10 @@ def build_result(snapshot, run_id, config=None, inputs=None):
         "factors": factors,
         "scores": scores,
         "limitations": [
-            "계수는 실행 확인용 가상값이며 연구용 11개 섹터 계수는 미구현입니다.",
+            "계수는 정성 가설이며 예측력·투자 효용은 미검증입니다. "
+            "점수는 확률·기대수익률이 아닙니다."
+            if research
+            else "계수는 실행 확인용 가상값이며 이 실행은 연구용 11개 섹터 모델이 아닙니다.",
             "과거 vintage는 날짜 단위이며 장중 발표시각을 보장하지 않습니다. "
             "엄밀한 과거 검증용 유효성은 false입니다.",
             "현재 수집은 수집 시각부터, 과거 조회는 미국 중부 전일 vintage를 다음날 "
@@ -112,9 +142,18 @@ def build_result(snapshot, run_id, config=None, inputs=None):
             "가격·매매·백테스트·4주/13주 추세·자동 실행은 미구현입니다.",
         ],
     }
+    if research:
+        result.update(
+            model_kind="research",
+            model_status=model["status"],
+            model_frozen_at=model["frozen_at"],
+            rationale_document=model["rationale_document"],
+            ranking_policy=model["ranking_policy"],
+        )
+    return result
 
 
-def run(mode, output, as_of=None, parent_run_id=None, kind="original", replay=None):
+def run(mode, output, as_of=None, parent_run_id=None, kind="original", replay=None, model=None):
     as_of = instant(as_of) if as_of is not None else None
     if as_of is not None and as_of > datetime.now(UTC):
         raise DataError("미래 판단 시각은 사용할 수 없습니다.")
@@ -123,7 +162,17 @@ def run(mode, output, as_of=None, parent_run_id=None, kind="original", replay=No
         parent_folder = run_path(output, parent_run_id)
         if kind == "rerun" and not (parent_folder / "COMPLETE").exists():
             record = read_json(parent_folder / "run.json")
-            parent = {"result": {"mode": record["mode"]}}
+            parent_config = (
+                read_json(parent_folder / "config.json")
+                if (parent_folder / "config.json").exists()
+                else configuration(record.get("model_selector", "demo-v1"))
+            )
+            if record.get("config_hash") and digest(parent_config) != record["config_hash"]:
+                raise DataError("중단된 원본의 설정을 복원할 수 없습니다.")
+            parent = {
+                "result": {"mode": record["mode"]},
+                "config": parent_config,
+            }
         else:
             parent = load_run(output, parent_run_id, verify_report=kind != "replay")
     if parent and kind in ("correction", "rerun"):
@@ -133,9 +182,18 @@ def run(mode, output, as_of=None, parent_run_id=None, kind="original", replay=No
             as_of = as_of or instant(parent["result"]["as_of"])
             if week_slot(as_of) != week_slot(parent["result"]["as_of"]):
                 raise DataError("정정판은 원본과 같은 한국시간 주간 슬롯이어야 합니다.")
-    config = deepcopy(replay["config"]) if replay else configuration()
-    if replay and (config is None or config.get("engine_version") != ENGINE_VERSION):
+    if replay:
+        config = deepcopy(replay["config"])
+    elif parent and parent.get("config") is not None:
+        config = deepcopy(parent["config"])
+        if model is not None and digest(configuration(model)) != digest(config):
+            raise DataError("원본과 다른 모델로 정정/재수집할 수 없습니다. 별도 실행을 만드세요.")
+    else:
+        config = configuration(model or "demo-v1")
+    if config is None or config.get("engine_version") not in (ENGINE_VERSION, RESEARCH_ENGINE):
         raise DataError("저장 설정/선택 입력이 없거나 재현 엔진을 지원하지 않습니다.")
+    if config["engine_version"] == RESEARCH_ENGINE:
+        validate_research(config)
     run_id, folder = new_run(
         output,
         {
@@ -143,6 +201,10 @@ def run(mode, output, as_of=None, parent_run_id=None, kind="original", replay=No
             "kind": kind,
             "parent_run_id": parent_run_id,
             "mode": mode,
+            "model_selector": "research-v1"
+            if config["engine_version"] == RESEARCH_ENGINE
+            else "demo-v1",
+            "config_hash": digest(config),
             "requested_as_of": as_of.isoformat() if as_of else None,
             "operation": "saved_input_replay"
             if replay
@@ -214,10 +276,15 @@ def emit(text, output=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="MacroLens M2 — 미검증 연구용")
+    parser = argparse.ArgumentParser(description="MacroLens M3 — 미검증 연구용")
     sub = parser.add_subparsers(dest="command", required=True)
     weekly = sub.add_parser("weekly", help="새 수집·계산 실행")
     weekly.add_argument("--mode", choices=("sample", "fred"), default="sample")
+    weekly.add_argument(
+        "--model",
+        choices=("demo-v1", "research-v1"),
+        help="기본 demo-v1; 정정/재수집은 원본 모델을 상속",
+    )
     weekly.add_argument("--output", type=Path, default=Path("reports"))
     weekly.add_argument("--as-of", help="시간대가 있는 판단 시각; FRED 과거 vintage 조회")
     relation = weekly.add_mutually_exclusive_group()
@@ -252,7 +319,11 @@ def main(argv=None):
                         {
                             "run": saved["record"],
                             "result": saved["result"],
-                            "compatibility": "M2" if saved["config"] else "M1 read-only",
+                            "compatibility": "M3"
+                            if saved["result"].get("model_kind") == "research"
+                            else "M2"
+                            if saved["config"]
+                            else "M1 read-only",
                         }
                     )
                 )
@@ -270,7 +341,7 @@ def main(argv=None):
         else:
             parent = args.corrects or args.rerun_of
             kind = "correction" if args.corrects else "rerun" if args.rerun_of else "original"
-            result, folder = run(args.mode, args.output, args.as_of, parent, kind)
+            result, folder = run(args.mode, args.output, args.as_of, parent, kind, model=args.model)
     except (DataError, OSError) as exc:
         message = str(exc) if isinstance(exc, DataError) else "파일 읽기/저장 실패 (덮어쓰기 불가)"
         print(f"실행 실패: {message}", file=sys.stderr)
