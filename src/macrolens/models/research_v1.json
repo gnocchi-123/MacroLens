@@ -1,0 +1,243 @@
+{
+  "calculation_policy": {
+    "base_score": 50,
+    "clip_z": 3,
+    "current_time_policy": "collected-at-v1",
+    "ddof": 1,
+    "difference_base_max_gap_days": 7,
+    "difference_days": 28,
+    "exclude_latest_from_window": true,
+    "factor_divisor": 3,
+    "historical_time_policy": "chicago-prior-day-v1",
+    "missing_policy": "hold_all_active_inputs",
+    "normalization": "sum_absolute_coefficients",
+    "sample_time_policy": "synthetic-v1",
+    "score_scale": 50,
+    "strict_point_in_time": false,
+    "tie_comparison": "exact_unrounded",
+    "tie_display_order": "gics_ascending",
+    "version": "m3-factors-v1"
+  },
+  "engine_version": "m3-v1",
+  "indicators": {
+    "CPIAUCSL": {
+      "factor": "inflation",
+      "frequency": "Monthly",
+      "max_age_days": 75,
+      "name": "소비자물가",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "transform": "yoy",
+      "units": "Index 1982-1984=100",
+      "window": 60
+    },
+    "DGS10": {
+      "factor": "rates",
+      "frequency": "Daily",
+      "max_age_days": 7,
+      "name": "10년 국채금리",
+      "seasonal_adjustment": "Not Seasonally Adjusted",
+      "transform": "difference_28d",
+      "units": "Percent",
+      "window": 1260
+    },
+    "INDPRO": {
+      "factor": "growth",
+      "frequency": "Monthly",
+      "max_age_days": 75,
+      "name": "산업생산",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "transform": "yoy",
+      "units": "Index 2017=100",
+      "window": 60
+    },
+    "UNRATE": {
+      "factor": "employment",
+      "frequency": "Monthly",
+      "max_age_days": 75,
+      "name": "실업률",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "transform": "negative_3m",
+      "units": "Percent",
+      "window": 60
+    }
+  },
+  "model": {
+    "frozen_at": "2026-10-08T13:22:39.386450+00:00",
+    "kind": "research",
+    "purpose": "11개 미국 섹터의 정성 가설 계수 — 미검증 연구용",
+    "ranking_policy": "average",
+    "rationale_document": "docs/model_card.md",
+    "sector_metadata": {
+      "경기소비재": {
+        "gics": "25",
+        "rationale_ids": {
+          "employment": "CD-E",
+          "growth": "CD-G",
+          "inflation": "CD-I",
+          "rates": "CD-R"
+        }
+      },
+      "금융": {
+        "gics": "40",
+        "rationale_ids": {
+          "employment": "FI-E",
+          "growth": "FI-G",
+          "inflation": "FI-I",
+          "rates": "FI-R"
+        }
+      },
+      "부동산": {
+        "gics": "60",
+        "rationale_ids": {
+          "employment": "RE-E",
+          "growth": "RE-G",
+          "inflation": "RE-I",
+          "rates": "RE-R"
+        }
+      },
+      "산업재": {
+        "gics": "20",
+        "rationale_ids": {
+          "employment": "IN-E",
+          "growth": "IN-G",
+          "inflation": "IN-I",
+          "rates": "IN-R"
+        }
+      },
+      "소재": {
+        "gics": "15",
+        "rationale_ids": {
+          "employment": "MA-E",
+          "growth": "MA-G",
+          "inflation": "MA-I",
+          "rates": "MA-R"
+        }
+      },
+      "에너지": {
+        "gics": "10",
+        "rationale_ids": {
+          "employment": "EN-E",
+          "growth": "EN-G",
+          "inflation": "EN-I",
+          "rates": "EN-R"
+        }
+      },
+      "유틸리티": {
+        "gics": "55",
+        "rationale_ids": {
+          "employment": "UT-E",
+          "growth": "UT-G",
+          "inflation": "UT-I",
+          "rates": "UT-R"
+        }
+      },
+      "정보기술": {
+        "gics": "45",
+        "rationale_ids": {
+          "employment": "IT-E",
+          "growth": "IT-G",
+          "inflation": "IT-I",
+          "rates": "IT-R"
+        }
+      },
+      "커뮤니케이션 서비스": {
+        "gics": "50",
+        "rationale_ids": {
+          "employment": "CM-E",
+          "growth": "CM-G",
+          "inflation": "CM-I",
+          "rates": "CM-R"
+        }
+      },
+      "필수소비재": {
+        "gics": "30",
+        "rationale_ids": {
+          "employment": "CS-E",
+          "growth": "CS-G",
+          "inflation": "CS-I",
+          "rates": "CS-R"
+        }
+      },
+      "헬스케어": {
+        "gics": "35",
+        "rationale_ids": {
+          "employment": "HC-E",
+          "growth": "HC-G",
+          "inflation": "HC-I",
+          "rates": "HC-R"
+        }
+      }
+    },
+    "sectors": {
+      "경기소비재": {
+        "employment": 2,
+        "growth": 1,
+        "inflation": -1,
+        "rates": -1
+      },
+      "금융": {
+        "employment": 1,
+        "growth": 1,
+        "inflation": 0,
+        "rates": 0
+      },
+      "부동산": {
+        "employment": 1,
+        "growth": 1,
+        "inflation": 0,
+        "rates": -2
+      },
+      "산업재": {
+        "employment": 1,
+        "growth": 2,
+        "inflation": -1,
+        "rates": -1
+      },
+      "소재": {
+        "employment": 0,
+        "growth": 2,
+        "inflation": 1,
+        "rates": -1
+      },
+      "에너지": {
+        "employment": 0,
+        "growth": 1,
+        "inflation": 1,
+        "rates": 0
+      },
+      "유틸리티": {
+        "employment": 0,
+        "growth": -1,
+        "inflation": 0,
+        "rates": -2
+      },
+      "정보기술": {
+        "employment": 0,
+        "growth": 2,
+        "inflation": 0,
+        "rates": -1
+      },
+      "커뮤니케이션 서비스": {
+        "employment": 1,
+        "growth": 1,
+        "inflation": 0,
+        "rates": -1
+      },
+      "필수소비재": {
+        "employment": -1,
+        "growth": -1,
+        "inflation": -1,
+        "rates": -1
+      },
+      "헬스케어": {
+        "employment": 0,
+        "growth": -1,
+        "inflation": 0,
+        "rates": -1
+      }
+    },
+    "source_draft_sha256": "da052fb8735d1bb1a414e36c6787bebc0b208178fe20ded7a68612ea67d537cc",
+    "status": "frozen",
+    "version": "macro-sector-hypothesis-v1"
+  }
+}
