@@ -17,7 +17,7 @@ uv run --locked python -m macrolens weekly --mode sample
 ```
 
 `uv`가 이미 있으면 설치 명령은 생략합니다. `--inexact`는 기존 가상환경의 다른
-패키지를 유지합니다. 실행 패키지는 Python 표준 라이브러리만 사용하고,
+패키지를 유지합니다. M1~M3 계산은 Python 표준 라이브러리만 사용하고,
 개발 도구 pytest·Ruff는 `uv.lock`으로 고정합니다.
 
 정상 실행은 `demo_complete / 미검증 연구용 / sample`과 파일 경로를 출력합니다.
@@ -253,3 +253,44 @@ uv run --locked ruff format --check .
 
 계획 원본은 `docs/macro_sector_project_plan_v2.md`, 맥락은
 `docs/MacroLens_Project_Context_v2.txt`입니다. M1 구현 기록은 원본 계획과 구분해 남깁니다.
+
+## M4 첫 단계: 가격 자료 검수와 검증 설계
+
+[실제 자료 조사·검수 결과와 상세 명령](docs/m4_data_audit.md),
+[검증 설계 및 미확정 제안](docs/m4_validation_design.md)을 확인하세요.
+현재 공식 배당 대조원은 확보했지만 **일별 시장 가격은 미확보·보류**입니다.
+Yahoo 자동 수집의 사전 허가 및 공식 CSV의 Gold 구독 조건 때문에 무료 수집기로
+채택하지 않았습니다. 전략 백테스트·계수 최적화는 구현하지 않았습니다.
+
+```bash
+uv sync --locked --extra price-audit
+uv run --locked --extra price-audit pytest -q
+uv run --locked --extra price-audit ruff check .
+uv run --locked --extra price-audit ruff format --check .
+
+# 공개 출처 연결 확인: 접속 성공과 가격 적격성은 다릅니다.
+uv run --locked --extra price-audit python -m macrolens.price_audit probe
+
+# 공식 배당 XLSX 확보 및 XLC·XLK·SPY 사건 확인: 일별 가격 수집이 아닙니다.
+uv run --locked --extra price-audit python -m macrolens.price_audit issuer
+
+# 허용된 가격 파일을 나중에 검수하기 위한 빈 입력 명세
+uv run --locked --extra price-audit python -m macrolens.price_audit template
+```
+
+직접 검수 결과: **120 tests passed**, Ruff 검사·포맷 통과.
+`probe`와 `issuer`의 `held`·종료 코드 2는 가격 적격성 보류라는 정상적인 보고입니다.
+원본·보고서는 Git 제외된 `data/price_audit/<새 ID>/`에 보존하며 덮어쓰지 않습니다.
+`price-audit` 추가 의존성을 설치하지 않은 기본 테스트에서는 M4 검수 테스트가 생략됩니다.
+
+허용 경로·보존 권한·실제 가격 파일·공식 대조 기록을 채운 후에만 다음을 사용합니다.
+빈 명세는 권한 미확인 오류로 중단됩니다. `SAVED_DIR`는 앞 명령이 출력한 저장 폴더로 바꿉니다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.price_audit audit --manifest data/price_inbox/manifest.json
+uv run --locked --extra price-audit python -m macrolens.price_audit recheck SAVED_DIR
+uv run --locked --extra price-audit python -m macrolens.price_audit issuer --file SAVED_DIR/issuer-distributions.xlsx
+```
+
+`recheck`는 **가격 파일 검수 기록**, `issuer --file`은 **배당 XLSX**를 외부 API 없이 다시 읽습니다.
+합성 자료의 `synthetic_only`나 재검수 `matched`는 실제 공급자 자료의 정확성 인증이 아닙니다.

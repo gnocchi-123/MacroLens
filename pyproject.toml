@@ -13,6 +13,11 @@ dependencies = []
 [project.scripts]
 macrolens = "macrolens.cli:main"
 
+[project.optional-dependencies]
+price-audit = [
+    "exchange-calendars==4.13.2",
+]
+
 [dependency-groups]
 dev = ["pytest>=8.3,<10", "ruff>=0.9,<1"]
 
