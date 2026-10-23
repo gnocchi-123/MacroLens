@@ -1,6 +1,6 @@
 # MacroLens
 
-2026-10-18 추가 결정: **KIS 실제 연결과 키 입력은 사용자 준비 후 진행**한다. 지금은 연결 준비와 오프라인 검증을 계획하며, 키가 없어도 기존 FRED·샘플·이력·재현은 정상 동작해야 한다. KIS는 기본 비활성이고 명시적으로 선택한 가격 수집 작업에서만 인증한다. 미설정 가격은 미수집/보류로 표시하며 합성 가격을 실제 가격으로 대체하지 않는다.
+2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
 
 미국 거시경제 기반 섹터 분석. **M3: 11개 섹터 연구 점수**와 M2의 자료 시점·실행 이력·전주 비교를 제공합니다.
 기본 명령은 기존 가상 모델이며, `--model research-v1`으로 동결한 연구 가설 계수를 선택합니다.
@@ -262,7 +262,7 @@ uv run --locked ruff format --check .
 [검증 설계 및 미확정 제안](docs/m4_validation_design.md)을 확인하세요.
 2026-10-18 사용자 결정으로 **한국투자증권(KIS) API를 우선 가격·권리 수집 경로로 도입**합니다.
 [KIS 도입·검수 계획](docs/kis_integration_plan.md)과 [진행 기록](docs/progress.md)을 기준으로 이어갑니다.
-현재 공식 배당 대조원은 확보했지만 **KIS 수집기와 실제 일별 시장 가격 검수는 미완료**입니다.
+이전 조사에서 공식 배당 대조원을 확보했습니다. **KIS 수집기는 구현했고 실제 인증·일별 가격 검수는 미실시**입니다.
 Yahoo 자동 수집의 사전 허가 및 공식 CSV의 Gold 구독 조건 때문에 무료 수집기로
 채택하지 않았습니다. 전략 백테스트·계수 최적화는 구현하지 않았습니다.
 
@@ -282,12 +282,12 @@ uv run --locked --extra price-audit python -m macrolens.price_audit issuer
 uv run --locked --extra price-audit python -m macrolens.price_audit template
 ```
 
-직접 검수 결과: **120 tests passed**, Ruff 검사·포맷 통과.
+이전 M4 작업의 검수 결과(2026-10-17): **120 tests passed**, Ruff 검사·포맷 통과. 최신 KIS 검수는 아래 절을 따릅니다.
 `probe`와 `issuer`의 `held`·종료 코드 2는 가격 적격성 보류라는 정상적인 보고입니다.
 원본·보고서는 Git 제외된 `data/price_audit/<새 ID>/`에 보존하며 덮어쓰지 않습니다.
 `price-audit` 추가 의존성을 설치하지 않은 기본 테스트에서는 M4 검수 테스트가 생략됩니다.
 
-아래 기존 `template/audit` 계약은 Yahoo 형태 입력용이며 KIS에 바로 사용할 수 없습니다. KIS 어댑터·공급자별 명세는 다음 구현 대상입니다.
+아래 기존 `template/audit` 계약은 Yahoo 형태 입력용이며 KIS에 바로 사용할 수 없습니다. KIS는 아래 `macrolens.kis` 명령과 별도 원본 계약을 사용합니다.
 기존 계약에 맞는 허용 경로·보존 권한·실제 가격 파일·공식 대조 기록을 채운 후에만 다음을 사용합니다.
 빈 명세는 권한 미확인 오류로 중단됩니다. `SAVED_DIR`는 앞 명령이 출력한 저장 폴더로 바꿉니다.
 
@@ -299,3 +299,99 @@ uv run --locked --extra price-audit python -m macrolens.price_audit issuer --fil
 
 `recheck`는 **가격 파일 검수 기록**, `issuer --file`은 **배당 XLSX**를 외부 API 없이 다시 읽습니다.
 합성 자료의 `synthetic_only`나 재검수 `matched`는 실제 공급자 자료의 정확성 인증이 아닙니다.
+
+## KIS 조회 전용 연결 (2026-10-23 구현)
+
+별도 명령 `python -m macrolens.kis`에서만 인증합니다. 주문·잔고·자동매매는 없습니다.
+기존 FRED·샘플·이력·비교·재현 명령은 그대로입니다. 새 의존성·잠금 파일 변경은 없습니다.
+이번 개발 환경에 키가 없어 **실제 인증·가격·권리 조회는 아직 미실시**입니다.
+147개 테스트와 Ruff 검사/포맷을 통과했지만 공급자 자료 정확성 인증이 아닙니다.
+
+먼저 Codespaces에서 작업 파일을 가져옵니다. 변경 중인 파일이 있으면 보존한 뒤 진행하며
+`--force`, `reset --hard`는 사용하지 않습니다.
+
+```bash
+cd /workspaces/MacroLens
+git status --short
+git fetch origin
+git switch feat/m4-kis-data
+git merge --ff-only origin/feat/m4-kis-data
+uv sync --locked --extra price-audit
+uv run --locked --extra price-audit pytest -q
+uv run --locked --extra price-audit ruff check .
+uv run --locked --extra price-audit ruff format --check .
+```
+
+키는 이미 Codespaces Secrets에 설정했다면 다시 입력하지 않습니다.
+[GitHub Codespaces Secrets](https://github.com/settings/codespaces)에서
+`KIS_APP_KEY`·`KIS_APP_SECRET`의 저장소 접근 대상이 MacroLens인지 확인하고,
+변경했다면 Codespace를 중지 후 다시 시작해 환경에 반영합니다.
+`.env` 자동 로딩은 없습니다. 키를 터미널 출력·채팅·Git에 붙이지 마세요.
+존재 여부만 확인하려면 다음을 사용합니다.
+
+```bash
+python -c 'import os; print({k: bool(os.getenv(k)) for k in ("KIS_APP_KEY", "KIS_APP_SECRET")})'
+```
+
+본인의 키가 **실전용이면 `--env real`**, 모의용이면 **`--env demo`**를 사용합니다.
+아래는 실전용 키를 선택한 경우의 명령이며 프로그램이 키 종류를 추정하지 않습니다.
+실전 서버의 시세 조회도 주문을 실행하지 않습니다. 계정의 개인 조회·보존·비용 조건을 먼저 확인하세요.
+
+```bash
+# 인증만 확인. 정상: authentication_ok / real / 가격·권리 검수 미실시
+uv run --locked --extra price-audit python -m macrolens.kis auth --env real
+
+# XLC·XLK·SPY: 최근/2020년 소량 가격 두 옵션 + 상품 식별 + 2025년 12월 권리
+uv run --locked --extra price-audit python -m macrolens.kis probe --env real
+```
+
+출력된 `data/kis/<ID>/report.md`를 VS Code에서 열고 Ctrl+Shift+V로 확인합니다.
+`audit.json`의 `can_collect=true`는 최근·2020년 가격/식별 검사를 통과하여 **전체 수집을 진행할 수 있음**을 뜻합니다.
+권리 미확인 때문에 같은 결과에 `held`가 함께 표시될 수 있습니다. 자료 적격성 승인이 아닙니다.
+AMS/529는 기본 거래소 요청 후보이며 응답과 불일치하면 보류합니다.
+실제 상품정보를 확인한 경우에만 `--exchange NYS` 또는 `NAS`로 별도 probe를 만들 수 있습니다.
+
+```bash
+# <probe가 출력한 ID>를 실제 ID로 바꾸세요. report.md를 제외한 폴더 경로입니다.
+KIS_PROBE_DIR="data/kis/<probe가 출력한 ID>"
+uv run --locked --extra price-audit python -m macrolens.kis collect --env real --probe "$KIS_PROBE_DIR"
+```
+
+전체 수집 목표는 **2020-06-01~2026-09-30 포함**, 평가 후보 시작은 **2021-06-07**입니다.
+실제 기간·행 수·결측·실패는 새 보고서에 나옵니다. `MODP=0/1`을 별개로 보존하며
+존재하지 않는 Adj Close를 만들거나 배당을 더하지 않습니다. 권리 금액/주당 기준과 조정 범위가
+미확인이라 최고 판정은 `conditional`, 총수익 평가 적격성은 false입니다.
+
+운용사 대조 파일이 이미 있으면 재다운로드 없이 사용하세요. 없을 때만 기존 `issuer` 명령으로 받습니다.
+
+```bash
+# 공식 배당만 확보하므로 held와 종료 코드 2가 나와도 다운로드 보고서를 확인합니다.
+uv run --locked --extra price-audit python -m macrolens.price_audit issuer
+
+# 각각 collect/issuer가 출력한 실제 폴더 ID로 변경하세요.
+KIS_SAVED_DIR="data/kis/<collect가 출력한 ID>"
+ISSUER_FILE="data/price_audit/<issuer가 출력한 ID>/issuer-distributions.xlsx"
+uv run --locked --extra price-audit python -m macrolens.kis recheck "$KIS_SAVED_DIR" --issuer-file "$ISSUER_FILE"
+
+# 새 근거를 추가하지 않고 원본만 재검수: 키·네트워크 사용 없음
+uv run --locked --extra price-audit python -m macrolens.kis recheck "$KIS_SAVED_DIR"
+```
+
+`recheck: matched`는 저장 원본으로 검사 결과가 같다는 뜻이며 실제 자료 승인이 아닙니다.
+공식 XLSX를 새로 추가한 재검수는 `different`일 수 있습니다. 원래 실행은 그대로 남습니다.
+
+| 출력/오류 | 의미와 다음 확인 |
+| --- | --- |
+| 인증 성공, 코드 0 | 토큰 발급/캐시 재사용. 상품 조회나 무료 전체 역사 검증은 아님 |
+| `can_collect: true`, 코드 0 | 소량 가격 검사 통과. 전체 수집 가능; 권리·총수익 적격성과 별개 |
+| `held`/`conditional`, 코드 2 | 검사 완료 후 보류/조건부. report.md와 audit.json의 issues/limits 확인 |
+| `missing_KIS_APP_KEY_or_KIS_APP_SECRET`, 코드 1 | 환경에 키 미반영. Secrets 저장소 대상 및 Codespace 재시작 확인 |
+| `authentication_failed`/`authentication_or_permission_failed` | 키의 실전/모의 선택·서비스 신청·계정 권한 확인. 오류 본문이나 키를 공유하지 않음 |
+| `token_cooldown_wait_61_seconds` | 최근 인증 시도 후 61초 대기. 실패한 POST도 반복 발급하지 않음 |
+| `network_or_timeout`/`http_retry_exhausted` | 네트워크·서버·호출 제한 문제. 데이터 자체 결함과 구별 |
+| `matching_successful_real_probe_required` | 같은 서버·거래소 probe의 가격 범위/식별 검사를 먼저 해결 |
+| `archive_integrity_failed` | 저장 파일 변경/손상. 덮어쓰지 말고 원본 백업과 비교 |
+
+토큰은 Git 제외 `data/.kis_auth/<real 또는 demo>/`에 보호 저장합니다. 이 폴더와 시장 원자료를
+공유하지 않습니다. KIS 명령을 실행하지 않으면 비활성입니다. 이 코드의 토큰 캐시는 Linux/Codespaces용입니다.
+다음 단계는 세 상품의 실제 보고서 검토입니다. 12개 확대·백테스트·계수 최적화는 실행하지 않습니다.
