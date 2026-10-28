@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -43,7 +44,23 @@ SECRET_NAMES = {
 
 
 class KISError(AuditError):
-    """Only fixed, non-sensitive diagnostic codes may cross the transport boundary."""
+    """Fixed diagnostics plus validated HTTP/KIS codes; never provider message text."""
+
+
+def provider_code(blob, secrets=()):
+    """Error bodies are untrusted and may echo secrets. Export a code only, or nothing."""
+    try:
+        code = public_payload(blob, secrets).get("msg_cd")
+    except KISError:
+        return None
+    if isinstance(code, str) and re.fullmatch(r"[A-Z]{3,5}[0-9]{4,5}", code):
+        return code
+    return None
+
+
+def request_error(reason, status, blob, secrets):
+    code = provider_code(blob, secrets) or "unavailable"
+    return KISError(f"{reason} (HTTP {status}; KIS {code})")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -60,7 +77,25 @@ def transport(method, url, headers, body, timeout):
                 raise KISError("response_too_large")
             return response.status, dict(response.headers), blob
     except HTTPError as exc:
-        # Never retain error bodies, headers or exception text: they can echo credentials.
+        # Inspect bounded GET errors in memory; return only a validated code, never text/headers.
+        if method == "GET":
+            try:
+                raw = exc.read(65537)
+                values = {k.lower(): v for k, v in headers.items()}
+                secrets = (
+                    values.get("appkey", ""),
+                    values.get("appsecret", ""),
+                    values.get("authorization", ""),
+                    values.get("authorization", "").removeprefix("Bearer "),
+                )
+                code = provider_code(raw, secrets) if len(raw) <= 65536 else None
+                return exc.code, {}, json.dumps({"msg_cd": code}).encode()
+            except (OSError, ValueError):
+                pass
+            finally:
+                exc.close()
+        else:
+            exc.close()
         return exc.code, {}, b"{}"
     except (URLError, TimeoutError, OSError):
         raise KISError("network_or_timeout") from None
@@ -252,20 +287,31 @@ class KISClient:
                         state.pop("token", None)
                         state["expires_at"] = 0
                         write_state(stream, state)
-                raise KISError("authentication_or_permission_failed")
+                raise request_error(
+                    "authentication_or_permission_failed",
+                    status,
+                    blob,
+                    (self.key, self.secret, token),
+                )
             if status == 429 or 500 <= status < 600:
                 if attempt < 2:
                     self.sleep(2 ** (attempt + 1))
                     continue
-                raise KISError("http_retry_exhausted")
+                raise request_error(
+                    "http_retry_exhausted", status, blob, (self.key, self.secret, token)
+                )
             if status != 200:
-                raise KISError("http_request_failed")
+                raise request_error(
+                    "http_request_failed", status, blob, (self.key, self.secret, token)
+                )
             data = public_payload(blob, (self.key, self.secret, token))
             if data.get("msg_cd") == "EGW00201" and attempt < 2:
                 self.sleep(2 ** (attempt + 1))
                 continue
             if data.get("rt_cd") != "0":
-                raise KISError("provider_rejected_request")
+                raise request_error(
+                    "provider_rejected_request", status, blob, (self.key, self.secret, token)
+                )
             cont = {k.lower(): v for k, v in response_headers.items()}.get("tr_cont", "").strip()
             if cont not in ("", "M", "F", "D", "E"):
                 raise KISError("unknown_continuation")

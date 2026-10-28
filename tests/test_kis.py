@@ -443,3 +443,64 @@ def test_rights_semantics_do_not_invent_ex_date_or_split_ratio():
 def test_duplicate_json_keys_cannot_hide_secret_fields():
     with pytest.raises(KISError, match="duplicate_json_key"):
         public_payload(b'{"output": {"appkey": "secret"}, "output": {}}')
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_http_diagnostic_keeps_status_and_code_not_message(tmp_path, monkeypatch, status):
+    credentials(monkeypatch)
+    calls = []
+
+    def send(method, *args):
+        if method == "POST":
+            return 200, {}, json.dumps({"access_token": TOKEN, "expires_in": 86400}).encode()
+        calls.append(1)
+        return status, {}, b'{"msg_cd":"EGW00201","msg1":"PRIVATE_PROVIDER_TEXT"}'
+
+    client = KISClient("real", tmp_path, send=send, sleep=lambda _: None)
+    with pytest.raises(KISError) as error:
+        client.get("search-info", {"PRDT_TYPE_CD": "529", "PDNO": "SPY"})
+    assert f"HTTP {status}; KIS EGW00201" in str(error.value)
+    assert "PRIVATE_PROVIDER_TEXT" not in str(error.value)
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"msg_cd": SECRET, "msg1": "anything"},
+        {"msg_cd": "EGW00201", "msg1": TOKEN},
+        {"msg_cd": "EGW00201\nPRIVATE", "msg1": "anything"},
+    ],
+)
+def test_error_code_extraction_rejects_secret_echo_or_invalid_code(body):
+    from macrolens.kis_client import provider_code
+
+    assert provider_code(json.dumps(body).encode(), (KEY, SECRET, TOKEN)) is None
+
+
+def test_urllib_http_error_only_returns_sanitized_code(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+
+    from macrolens import kis_client
+
+    body = io.BytesIO(b'{"msg_cd":"EGW00201","msg1":"PRIVATE_PROVIDER_TEXT"}')
+
+    class Opener:
+        def open(self, *args, **kwargs):
+            raise HTTPError(
+                "https://example.test", 500, "private reason", {"authorization": TOKEN}, body
+            )
+
+    monkeypatch.setattr(kis_client, "build_opener", lambda *args: Opener())
+    status, headers, raw = kis_client.transport(
+        "GET",
+        "https://example.test",
+        {"appkey": KEY, "appsecret": SECRET, "authorization": "Bearer " + TOKEN, "custtype": "P"},
+        None,
+        15,
+    )
+    assert status == 500 and headers == {}
+    assert json.loads(raw) == {"msg_cd": "EGW00201"}
+    assert body.closed
+    assert b"PRIVATE_PROVIDER_TEXT" not in raw

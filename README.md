@@ -395,3 +395,18 @@ uv run --locked --extra price-audit python -m macrolens.kis recheck "$KIS_SAVED_
 토큰은 Git 제외 `data/.kis_auth/<real 또는 demo>/`에 보호 저장합니다. 이 폴더와 시장 원자료를
 공유하지 않습니다. KIS 명령을 실행하지 않으면 비활성입니다. 이 코드의 토큰 캐시는 Linux/Codespaces용입니다.
 다음 단계는 세 상품의 실제 보고서 검토입니다. 12개 확대·백테스트·계수 최적화는 실행하지 않습니다.
+
+### SPY 상품정보 조회 오류 재점검 (2026-10-28)
+
+`identity: http_retry_exhausted`는 상품정보 요청이 HTTP 429 또는 5xx에서 재시도 후
+종료됐다는 뜻입니다. 따라서 `USD 통화 미확인`은 USD가 아니라는 판정이 아닙니다.
+이전 기록에는 HTTP 세부 코드가 남지 않아 재검수만으로 원인을 복원할 수 없습니다.
+업데이트 후 `probe --env real`을 한 번 실행해 새 보고서를 확인하세요. `auth`를 먼저
+반복 실행할 필요는 없습니다. 기존 토큰이 유효하면 자동 재사용합니다.
+
+새 오류 예시(실제 사용자 오류 코드가 아님):
+`identity: http_retry_exhausted (HTTP 503; KIS unavailable)`.
+HTTP 429는 호출 제한, 5xx는 서버가 오류 응답을 보낸 경우입니다. 5xx라도 요청·권한 문제일 수
+있어 KIS 코드와 함께 확인합니다. `unavailable`은 안전하게 기록할 코드가 없었다는 뜻입니다.
+키·토큰·오류 응답 원문 대신 새 `report.md` 전체를 공유하면 됩니다.
+추가 모의 테스트 포함 154개 및 Ruff 검사·포맷 통과. 실제 SPY 장애 해결은 아직 미확인입니다.
