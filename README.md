@@ -431,3 +431,38 @@ collect는 그 식별 경로를 자동으로 유지하므로 옵션을 다시 �
 보고서의 16행은 2020년 6월과 2026년 9월의 **두 소량 구간 합계**입니다. 날짜 최소/최대 사이
 전체 자료가 있다는 뜻이 아닙니다. 현재가상세의 현재 가격은 과거 가격 자료에 섞지 않습니다.
 현재 구현 환경의 실제 KIS 호출은 미실시이며 이 대체 경로의 실서비스 성공도 아직 미확인입니다.
+
+### 대체 식별 API도 EGW02004일 때: 한 번만 진단
+
+전체 probe를 반복하지 말고 다음을 실행하세요. 기본 대상은 **SPY / price-detail / AMS**입니다.
+
+```bash
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv run --locked --extra price-audit python -m macrolens.kis diagnose --env real
+```
+
+조회 GET은 **1회, 재시도 없음, 15초 타임아웃**입니다. 유효한 토큰을 재사용하며,
+없거나 만료된 경우에만 기존 규칙으로 인증을 별도 시도합니다. 주문·계좌 조회는 없습니다.
+다음 형태의 출력 중 `HTTP/KIS 코드`와 `KIS 설명` 줄을 확인합니다.
+
+```text
+KIS 단일 요청 진단: request_failed
+http_retry_exhausted (HTTP 500; KIS EGW02004)
+KIS 설명(민감값 검사·일부 생략): <서버 설명 중 안전하게 표시한 부분>
+진단 기록: data/kis_diagnostics/<새 ID>/diagnostic.json
+가격·권리 적격성 승인이 아닙니다. can_collect: false
+```
+
+위 설명은 예시 자리표시자이며 EGW02004의 의미를 추정한 문장이 아닙니다.
+이 명령에서 `http_retry_exhausted`는 시도 한도 1회에 도달했다는 기존 오류 이름입니다.
+실패 종료 코드는 2, 성공은 0이며 둘 다 데이터 적격성 승인과 다릅니다.
+키·토큰 반사가 발견되거나 안전하게 표시할 수 없으면 설명 자체를 생략합니다.
+주소·임의 영문/숫자 식별값도 생략하므로 서버 원문과 완전히 같지는 않습니다.
+오류 본문·인증 응답·인증 헤더는 저장하지 않습니다. 진단 JSON에는 같은 정제 설명만 저장합니다.
+성공한 시장 응답만 비밀값 검사를 거친 뒤 별도 response.json으로 보존합니다.
+공유할 것은 위 터미널의 코드·정제 설명이며 캐시나 원본 파일이 아닙니다.
+
+필요한 경우에만 `--endpoint basic-info` 또는 `search-info`, `dailyprice`와
+`--symbol XLC` 또는 `XLK`를 명시해 한 번씩 비교할 수 있습니다. 지금은 기본 명령 하나만 실행합니다.
+일반 auth/probe/collect/recheck의 오류 메시지 정책·판정 기준은 그대로입니다.

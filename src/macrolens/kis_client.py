@@ -7,6 +7,7 @@ import math
 import os
 import re
 import time
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -63,9 +64,71 @@ def provider_code(blob, secrets=()):
     return None
 
 
-def request_error(reason, status, blob, secrets):
+def diagnostic_message(blob, secrets=()):
+    """Opt-in diagnostic text, never the error body: reject secret echoes, mask free values."""
+    try:
+        message = public_payload(blob, secrets).get("msg1")
+    except KISError:
+        return None
+    if not isinstance(message, str) or not message or len(message) > 500:
+        return None
+    if any(unicodedata.category(c).startswith("C") and c not in "\r\n\t" for c in message):
+        return None
+    message = re.sub(r"https?://\S+|[\w.+-]+@[\w.-]+", "[주소 생략]", message)
+    allowed = {
+        "tr",
+        "id",
+        "tr_id",
+        "tr_cont",
+        "http",
+        "get",
+        "post",
+        "api",
+        "url",
+        "not",
+        "found",
+        "invalid",
+        "missing",
+        "expired",
+        "request",
+        "error",
+        "token",
+        "access",
+        "permission",
+        "rate",
+        "limit",
+        "exceeded",
+        "connection",
+        "timeout",
+        "internal",
+        "server",
+        "key",
+        "secret",
+        "appkey",
+        "appsecret",
+        "authorization",
+        "auth",
+        "excd",
+        "symb",
+        "pdno",
+        "prdt_type_cd",
+    }
+    allowed.update(tr_id.lower() for tr_id, _ in ENDPOINTS.values())
+
+    def mask(match):
+        value = match.group()
+        return value if value.lower() in allowed else "[값 생략]"
+
+    message = re.sub(r"[A-Za-z0-9_][A-Za-z0-9_./+=%-]*", mask, message)
+    return " ".join(message.split())
+
+
+def request_error(reason, status, blob, secrets, diagnostics=False):
     code = provider_code(blob, secrets) or "unavailable"
-    return KISError(f"{reason} (HTTP {status}; KIS {code})")
+    error = KISError(f"{reason} (HTTP {status}; KIS {code})")
+    if diagnostics:
+        error.provider_message = diagnostic_message(blob, secrets)
+    return error
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -73,7 +136,7 @@ class NoRedirect(HTTPRedirectHandler):
         raise KISError("redirect_refused")
 
 
-def transport(method, url, headers, body, timeout):
+def transport(method, url, headers, body, timeout, *, diagnostics=False):
     request = Request(url, data=body, headers=headers, method=method)
     try:
         with build_opener(NoRedirect()).open(request, timeout=timeout) as response:
@@ -94,7 +157,10 @@ def transport(method, url, headers, body, timeout):
                     values.get("authorization", "").removeprefix("Bearer "),
                 )
                 code = provider_code(raw, secrets) if len(raw) <= 65536 else None
-                return exc.code, {}, json.dumps({"msg_cd": code}).encode()
+                result = {"msg_cd": code}
+                if diagnostics and len(raw) <= 65536:
+                    result["msg1"] = diagnostic_message(raw, secrets)
+                return exc.code, {}, json.dumps(result).encode()
             except (OSError, ValueError):
                 pass
             finally:
@@ -252,7 +318,9 @@ class KISClient:
             self.token_value = token
             return token
 
-    def get(self, endpoint, params, continuation=""):
+    def get(self, endpoint, params, continuation="", *, max_attempts=3, diagnostics=False):
+        if max_attempts not in (1, 2, 3):
+            raise KISError("invalid_attempt_limit")
         if endpoint not in ENDPOINTS or set(params) != set(ENDPOINTS[endpoint][1].split()):
             raise KISError("quotation_contract_required")
         if continuation not in ("", "N") or any(not isinstance(v, str) for v in params.values()):
@@ -272,16 +340,17 @@ class KISClient:
             "custtype": "P",
         }
         url = self.base + ENDPOINT_PATHS[endpoint]
-        for attempt in range(3):
+        for attempt in range(max_attempts):
             # Conservative one request/second for both servers, not a claimed KIS entitlement.
             self.sleep(max(0, 1.0 - (self.clock() - self.last_request)))
             self.last_request = self.clock()
             try:
+                options = {"diagnostics": True} if diagnostics and self.send is transport else {}
                 status, response_headers, blob = self.send(
-                    "GET", url + "?" + urlencode(params), headers, None, 15
+                    "GET", url + "?" + urlencode(params), headers, None, 15, **options
                 )
             except KISError as exc:
-                if str(exc) == "network_or_timeout" and attempt < 2:
+                if str(exc) == "network_or_timeout" and attempt < max_attempts - 1:
                     self.sleep(2 ** (attempt + 1))
                     continue
                 raise
@@ -297,25 +366,38 @@ class KISClient:
                     status,
                     blob,
                     (self.key, self.secret, token),
+                    diagnostics=diagnostics,
                 )
             if status == 429 or 500 <= status < 600:
-                if attempt < 2:
+                if attempt < max_attempts - 1:
                     self.sleep(2 ** (attempt + 1))
                     continue
                 raise request_error(
-                    "http_retry_exhausted", status, blob, (self.key, self.secret, token)
+                    "http_retry_exhausted",
+                    status,
+                    blob,
+                    (self.key, self.secret, token),
+                    diagnostics=diagnostics,
                 )
             if status != 200:
                 raise request_error(
-                    "http_request_failed", status, blob, (self.key, self.secret, token)
+                    "http_request_failed",
+                    status,
+                    blob,
+                    (self.key, self.secret, token),
+                    diagnostics=diagnostics,
                 )
             data = public_payload(blob, (self.key, self.secret, token))
-            if data.get("msg_cd") == "EGW00201" and attempt < 2:
+            if data.get("msg_cd") == "EGW00201" and attempt < max_attempts - 1:
                 self.sleep(2 ** (attempt + 1))
                 continue
             if data.get("rt_cd") != "0":
                 raise request_error(
-                    "provider_rejected_request", status, blob, (self.key, self.secret, token)
+                    "provider_rejected_request",
+                    status,
+                    blob,
+                    (self.key, self.secret, token),
+                    diagnostics=diagnostics,
                 )
             cont = {k.lower(): v for k, v in response_headers.items()}.get("tr_cont", "").strip()
             if cont not in ("", "M", "F", "D", "E"):

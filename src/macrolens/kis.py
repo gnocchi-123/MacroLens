@@ -86,8 +86,22 @@ def main(argv=None):
     check.add_argument("saved", type=Path)
     check.add_argument("--output", type=Path, default=Path("data/kis"))
     check.add_argument("--issuer-file", type=Path)
+    diagnostic = sub.add_parser("diagnose", help="선택 API 한 번만 진단; 재시도·전체 probe 없음")
+    diagnostic.add_argument("--env", choices=("real", "demo"), required=True)
+    diagnostic.add_argument("--symbol", choices=SAMPLE, default="SPY")
+    diagnostic.add_argument("--exchange", choices=("AMS", "NYS", "NAS"), default="AMS")
+    diagnostic.add_argument(
+        "--endpoint",
+        choices=("search-info", "basic-info", "price-detail", "dailyprice"),
+        default="price-detail",
+    )
+    diagnostic.add_argument("--output", type=Path, default=Path("data/kis_diagnostics"))
     args = parser.parse_args(argv)
     try:
+        if args.command == "diagnose":
+            from .kis_diagnostic import diagnose
+
+            return diagnose(args)
         if args.command == "recheck":
             result, folder = recheck(args.saved, args.output, args.issuer_file)
             print("recheck: " + ("matched" if result["recheck"]["matched"] else "different"))
