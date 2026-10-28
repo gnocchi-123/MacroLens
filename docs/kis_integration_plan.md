@@ -227,3 +227,45 @@ API 한 페이지의 범위가 더 넓으면 원문 전체를 보존하고 해�
 - 현 단계의 최고 판정은 `conditional`이며 `total_return_eligible=false`를 유지한다.
   실제 자료 3종 결과 검토 전 12개 확대나 백테스트로 진행하지 않는다.
   `strict_point_in_time=false`, M3 동결 모델, R-001 후속 연구를 유지한다.
+
+## 12. 상품 식별 대체 경로 — 2026-10-28 후속
+
+사용자가 공유한 새 probe 보고서는 XLC/XLK/SPY 모두 MODP 0/1 각각 **16행**,
+기간별권리 **1/2/1행**, ICE **0/0/0행**, 공통 상품정보 실패 **HTTP 500 / EGW02004**였다.
+이는 사용자 Codespaces 실행 결과다. 이 환경에서 원본을 직접 읽거나 KIS를 호출한 결과가 아니다.
+16행은 2020-06-01~06-10 및 2026-09-21~09-30의 두 소량 구간이며, 6년 연속 가격이 아니다.
+
+공식 저장소를 다시 읽은 기준:
+[`3a9be59a3ed8745720dc3aa9d584bdf3b7830362`](https://github.com/koreainvestment/open-trading-api/tree/3a9be59a3ed8745720dc3aa9d584bdf3b7830362).
+`EGW02004`의 공식 설명은 저장소에서 찾지 못했고 공식 포털/검색은 이 환경 프록시에서 차단됐다.
+해외 상품정보 URL·CTPF1702R은 여전히 공식 예제에 있다. 특정 TR 폐지·계정 권한·서버 장애로
+원인을 확정하지 않으며, 에러 문구를 추정해 코드에 넣지 않는다.
+
+**공식적으로 문서화된 두 조회를 함께 쓰는 선택지**를 추가했다. 자동 우회/묵시적 fallback은 없다.
+
+| 식별 선택 | 공식 계약 | 대조 |
+| --- | --- | --- |
+| `overseas` (기존 기본값) | 해외 search-info / CTPF1702R | 기존 거래소·통화 검사 그대로 |
+| `basic-quote` | 공통 상품기본조회 `/uapi/domestic-stock/v1/quotations/search-info` / CTPF1604R | 반환 pdno가 요청 티커와 일치하고 prdt_type_cd가 529(AMS) 등 요청 유형과 같아야 함 |
+| 위 선택의 두 번째 조회 | 해외 현재가상세 `/uapi/overseas-price/v1/quotations/price-detail` / HHDFS76200200 | curr=USD 및 rsym=D+요청 거래소+티커가 일치해야 함 |
+
+공통 상품기본조회는 이름/경로가 domestic-stock이어도 공식 예제에 AAPL/512 및 미국 아멕스/529가
+명시되어 있다. 근거는 `examples_llm/domestic_stock/search_info/{search_info,chk_search_info}.py`.
+현재가상세의 AUTH/EXCD/SYMB, curr/rsym/etyp_nm 정의는
+`examples_llm/overseas_stock/price_detail/{price_detail,chk_price_detail}.py`에서 확인했다.
+외부 라이브러리는 조사 참고만 했으며 새 의존성으로 설치하거나 실행하지 않았다.
+
+두 조회가 모두 일치해야 가격 수집용 식별 검사를 통과한다. 조회 실패·다른 상품·유형·통화는
+계속 차단한다. 현재 응답의 last/open 등은 원본 증거로만 보관하고 과거 가격 행에 넣지 않는다.
+현재 상품정보는 과거 상장/분류 이력을 보증하지 않으며 총수익 적격성을 승인하지 않는다.
+해당 응답의 원문·명시적 API 경로·TR ID·수집 시각·해시와 identity_source를 보존한다.
+
+probe에 `--identity-source basic-quote`를 지정한다. collect는 저장 probe의 식별 경로를 그대로
+따르며 명시적으로 다른 경로를 지정하면 거부한다. 이전 기록에서 identity_source가 없으면
+기존 overseas 계약으로 읽는다. 이전 실패 기록을 새 경로 성공으로 소급 변경하지 않는다.
+`recheck`는 두 원본으로 네트워크 없이 재검수한다.
+
+ICE 0행은 여전히 unknown이다. 소량 조회의 ICE 검색일은 배당락일이 아닌 주로 발표일이므로
+12월 배당이 있어도 그 요청에서 나오지 않을 가능성과 공급자 범위를 구별해야 한다.
+두 식별 응답과 가격 검사가 통과하면 `can_collect=true`가 될 수 있지만 권리 대조가 남은 `held`는
+유지한다. 이 표시는 **전체 증거 수집 가능**이며 12개 확대·총수익 평가 승인이 아니다.

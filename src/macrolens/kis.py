@@ -75,6 +75,11 @@ def main(argv=None):
             cmd.add_argument("--exchange", choices=("AMS", "NYS", "NAS"), default="AMS")
             cmd.add_argument("--output", type=Path, default=Path("data/kis"))
             cmd.add_argument("--issuer-file", type=Path)
+            cmd.add_argument(
+                "--identity-source",
+                choices=("overseas", "basic-quote"),
+                help="상품 식별 경로. probe 기본 overseas; collect는 probe 경로 유지",
+            )
         if command == "collect":
             cmd.add_argument("--probe", type=Path, required=True)
     check = sub.add_parser("recheck")
@@ -87,14 +92,17 @@ def main(argv=None):
             result, folder = recheck(args.saved, args.output, args.issuer_file)
             print("recheck: " + ("matched" if result["recheck"]["matched"] else "different"))
         else:
+            identity_source = getattr(args, "identity_source", None) or "overseas"
             if args.command == "collect":
                 meta = verify_archive(args.probe)
+                identity_source = meta.get("identity_source", "overseas")
                 probe_result, _ = audit_archive(args.probe, meta)
                 if (
                     not probe_result["can_collect"]
                     or meta["environment"] != args.env
                     or meta["exchange"] != args.exchange
                     or meta["mode"] != "probe"
+                    or (args.identity_source and args.identity_source != identity_source)
                 ):
                     raise KISError("matching_successful_real_probe_required")
             client = KISClient(args.env)
@@ -114,6 +122,7 @@ def main(argv=None):
                     product,
                     DEFAULT_START,
                     DEFAULT_END,
+                    identity_source=identity_source,
                 )
                 if args.command == "collect":
                     archive.meta["preflight_archive"] = args.probe.name

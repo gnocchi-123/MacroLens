@@ -22,6 +22,8 @@ SERVERS = {
 ENDPOINTS = {
     "dailyprice": ("HHDFS76240000", "AUTH EXCD SYMB GUBN BYMD MODP"),
     "search-info": ("CTPF1702R", "PRDT_TYPE_CD PDNO"),
+    "basic-info": ("CTPF1604R", "PRDT_TYPE_CD PDNO"),
+    "price-detail": ("HHDFS76200200", "AUTH EXCD SYMB"),
     "period-rights": (
         "CTRGT011R",
         "RGHT_TYPE_CD INQR_DVSN_CD INQR_STRT_DT INQR_END_DT PDNO PRDT_TYPE_CD "
@@ -29,6 +31,9 @@ ENDPOINTS = {
     ),
     "rights-by-ice": ("HHDFS78330900", "NCOD SYMB ST_YMD ED_YMD"),
 }
+ENDPOINT_PATHS = {name: "/uapi/overseas-price/v1/quotations/" + name for name in ENDPOINTS}
+# The official common product lookup accepts US product types, despite this path's name.
+ENDPOINT_PATHS["basic-info"] = "/uapi/domestic-stock/v1/quotations/search-info"
 SECRET_NAMES = {
     "appkey",
     "appsecret",
@@ -266,7 +271,7 @@ class KISClient:
             "tr_cont": continuation,
             "custtype": "P",
         }
-        url = self.base + "/uapi/overseas-price/v1/quotations/" + endpoint
+        url = self.base + ENDPOINT_PATHS[endpoint]
         for attempt in range(3):
             # Conservative one request/second for both servers, not a claimed KIS entitlement.
             self.sleep(max(0, 1.0 - (self.clock() - self.last_request)))

@@ -5,12 +5,12 @@ import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
-from .kis_client import ENDPOINTS, KISError
+from .kis_client import ENDPOINT_PATHS, ENDPOINTS, KISError
 from .price_audit import dump, new_folder, now, sha
 
 SAMPLE = ("XLC", "XLK", "SPY")
 CONTRACT = "kis-quotes-v1"
-SOURCE_COMMIT = "cd63caee6aeb90553d506b15ab6866cfad23beda"
+SOURCE_COMMIT = "3a9be59a3ed8745720dc3aa9d584bdf3b7830362"
 DEFAULT_START = "2020-06-01"
 DEFAULT_END = "2026-09-30"
 
@@ -57,7 +57,11 @@ def verify_archive(folder):
 
 
 class Archive:
-    def __init__(self, output, environment, mode, exchange, product, start, end):
+    def __init__(
+        self, output, environment, mode, exchange, product, start, end, identity_source="overseas"
+    ):
+        if identity_source not in ("overseas", "basic-quote"):
+            raise KISError("unknown_identity_source")
         self.folder = new_folder(output, "kis_" + mode)
         try:
             commit = subprocess.check_output(
@@ -77,6 +81,7 @@ class Archive:
             "mode": mode,
             "exchange": exchange,
             "product_type": product,
+            "identity_source": identity_source,
             "start": start,
             "end_inclusive": end,
             "evaluation_start": "2021-06-07",
@@ -118,6 +123,7 @@ class Archive:
                 "file": name,
                 "sha256": sha(blob),
                 "endpoint": endpoint,
+                "path": ENDPOINT_PATHS[endpoint],
                 "tr_id": ENDPOINTS[endpoint][0],
                 "params": dict(params),
                 "label": label,
@@ -231,17 +237,20 @@ def rights_pages(client, archive, ticker, start, end, max_pages=100):
 def collect(client, archive):
     meta = archive.meta
     for ticker in SAMPLE:
-        try:
-            data, cont = archive.request(
-                client,
-                "search-info",
-                {"PRDT_TYPE_CD": meta["product_type"], "PDNO": ticker},
-                "identity",
-            )
-            if not data.get("output") or cont in ("M", "F"):
-                raise KISError("identity_missing_or_partial")
-        except KISError as exc:
-            archive.failure(ticker, "identity", str(exc))
+        requests = [("search-info", {"PRDT_TYPE_CD": meta["product_type"], "PDNO": ticker})]
+        if meta.get("identity_source", "overseas") == "basic-quote":
+            requests = [
+                ("basic-info", {"PRDT_TYPE_CD": meta["product_type"], "PDNO": ticker}),
+                ("price-detail", {"AUTH": "", "EXCD": meta["exchange"], "SYMB": ticker}),
+            ]
+        for endpoint, params in requests:
+            label = "identity" if endpoint == "search-info" else "identity_" + endpoint
+            try:
+                data, cont = archive.request(client, endpoint, params, label)
+                if not data.get("output") or cont in ("M", "F"):
+                    raise KISError("identity_missing_or_partial")
+            except KISError as exc:
+                archive.failure(ticker, label, str(exc))
         ranges = [("full", meta["start"], meta["end_inclusive"])]
         if meta["mode"] == "probe":
             ranges = [("recent", "2026-09-21", "2026-09-30"), ("old", "2020-06-01", "2020-06-10")]
@@ -307,6 +316,14 @@ def finish(archive, result):
         "",
         f"상태: {result['status']} / {result['evidence_kind']}",
         f"소량 점검 후 전체 수집 가능: {result.get('can_collect', False)}",
+        "상품 식별 경로: " + archive.meta.get("identity_source", "overseas"),
+        (
+            "소량 가격 구간: 2020-06-01~06-10 및 2026-09-21~09-30. "
+            "최초~최종 날짜 사이 전체를 수집한 것이 아닙니다. "
+            "권리는 2025년 12월 현지 기준일/ICE 발표일 기준 조회입니다."
+            if archive.meta["mode"] == "probe"
+            else "전체 목표 구간의 완전성은 coverage를 확인하세요."
+        ),
         "",
         "| 상품 | MODP=0 행 수·범위 | MODP=1 행 수 | 권리/ICE 행 수 | 판정 |",
         "| --- | --- | --- | --- | --- |",
@@ -318,6 +335,7 @@ def finish(archive, result):
             f"{info['prices']['1']['rows']} | {info['rights_rows']}/{info['ice_rows']} | "
             f"{info['status']} |"
         )
+    for ticker, info in result["symbols"].items():
         lines.extend(["", ticker + ": " + "; ".join(info["issues"] + info["limits"])])
     lines += [
         "",

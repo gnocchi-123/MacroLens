@@ -504,3 +504,138 @@ def test_urllib_http_error_only_returns_sanitized_code(monkeypatch):
     assert json.loads(raw) == {"msg_cd": "EGW00201"}
     assert body.closed
     assert b"PRIVATE_PROVIDER_TEXT" not in raw
+
+
+class FakeBasicQuote(FakeMarket):
+    def __init__(self, endpoint_patch=None, fail_basic=False):
+        super().__init__(empty_rights=True)
+        self.endpoint_patch = endpoint_patch or {}
+        self.fail_basic = fail_basic
+
+    def get(self, endpoint, p, continuation=""):
+        if endpoint not in ("basic-info", "price-detail"):
+            return super().get(endpoint, p, continuation)
+        self.calls.append((endpoint, dict(p), continuation))
+        if endpoint == "basic-info":
+            if self.fail_basic:
+                raise KISError("http_retry_exhausted (HTTP 500; KIS EGW02004)")
+            output = {"pdno": p["PDNO"], "prdt_type_cd": "529", "std_pdno": "SYNTHETIC_ISIN"}
+        else:
+            output = {
+                "rsym": "DAMS" + p["SYMB"],
+                "curr": "USD",
+                "etyp_nm": "ETF",
+                "last": "999999999",
+                "open": "999999999",
+            }
+        output.update(self.endpoint_patch.get(endpoint, {}))
+        data = {"rt_cd": "0", "output": output}
+        return data, json.dumps(data).encode(), ""
+
+
+def basic_probe(tmp_path, client):
+    a = kis_collect.Archive(
+        tmp_path,
+        "real",
+        "probe",
+        "AMS",
+        "529",
+        kis_collect.DEFAULT_START,
+        kis_collect.DEFAULT_END,
+        identity_source="basic-quote",
+    )
+    # All calls are mocked. 'real' exercises the production-label gate only.
+    kis_collect.collect(client, a)
+    result, normalized = kis_audit.audit_archive(a.folder, a.meta)
+    return a, result, normalized
+
+
+def test_basic_quote_requires_both_sources_and_preserves_offline_replay(tmp_path):
+    client = FakeBasicQuote()
+    a, result, normalized = basic_probe(tmp_path / "source", client)
+    assert result["can_collect"]
+    assert not result["total_return_eligible"] and result["status"] == "held"
+    assert all(endpoint != "search-info" for endpoint, _, _ in client.calls)
+    for ticker in kis_collect.SAMPLE:
+        symbol = result["symbols"][ticker]
+        assert symbol["prices"]["0"]["rows"] == 16
+        assert symbol["prices"]["1"]["rows"] == 16
+        assert symbol["identity"]["price_detail"]["last"] == "999999999"
+        assert all(
+            r["clos"] != 999999999 for p in normalized[ticker]["prices_by_modp"].values() for r in p
+        )
+    kis_collect.finish(a, result)
+    replay, _ = kis.recheck(a.folder, tmp_path / "replay")
+    assert replay["recheck"]["matched"]
+    report = (a.folder / "report.md").read_text()
+    assert "최초~최종 날짜 사이 전체를 수집한 것이 아닙니다" in report
+    assert report.index("| SPY |") < report.index("XLC:")
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"basic-info": {"pdno": "WRONG"}},
+        {"basic-info": {"prdt_type_cd": "512"}},
+        {"price-detail": {"curr": "JPY"}},
+        {"price-detail": {"rsym": "DNYSXLK"}},
+        {"price-detail": {"curr": ""}},
+    ],
+)
+def test_basic_quote_identity_mismatch_still_blocks_collection(tmp_path, patch):
+    _, result, _ = basic_probe(tmp_path, FakeBasicQuote(endpoint_patch=patch))
+    assert not result["can_collect"]
+    assert result["symbols"]["XLK"]["prices"]["0"]["rows"] == 16
+
+
+def test_basic_identity_failure_not_ignored_when_quote_and_prices_work(tmp_path):
+    _, result, _ = basic_probe(tmp_path, FakeBasicQuote(fail_basic=True))
+    assert not result["can_collect"]
+    assert any("identity_basic-info:" in s for s in result["symbols"]["SPY"]["issues"])
+
+
+def test_basic_quote_transport_uses_official_paths_and_tr_ids(tmp_path, monkeypatch):
+    credentials(monkeypatch)
+    calls = []
+
+    def send(method, url, headers, body, timeout):
+        if method == "POST":
+            return 200, {}, json.dumps({"access_token": TOKEN, "expires_in": 86400}).encode()
+        calls.append((url, headers["tr_id"]))
+        assert KEY not in url and SECRET not in url and TOKEN not in url
+        return 200, {}, b'{"rt_cd":"0", "output":{}}'
+
+    client = KISClient("real", tmp_path, send=send, sleep=lambda _: None)
+    client.get("basic-info", {"PRDT_TYPE_CD": "529", "PDNO": "SPY"})
+    client.get("price-detail", {"AUTH": "", "EXCD": "AMS", "SYMB": "SPY"})
+    assert calls[0][0].split("?")[0].endswith("/uapi/domestic-stock/v1/quotations/search-info")
+    assert calls[0][1] == "CTPF1604R"
+    assert calls[1][0].split("?")[0].endswith("/uapi/overseas-price/v1/quotations/price-detail")
+    assert calls[1][1] == "HHDFS76200200"
+
+
+def test_collect_preserves_probe_identity_source_and_rejects_change(tmp_path, monkeypatch, capsys):
+    a, result, _ = basic_probe(tmp_path / "source", FakeBasicQuote())
+    kis_collect.finish(a, result)
+    assert (
+        kis.main(
+            ["collect", "--env", "real", "--probe", str(a.folder), "--identity-source", "overseas"]
+        )
+        == 1
+    )
+    assert "matching_successful_real_probe_required" in capsys.readouterr().err
+
+    class CLIClient(FakeBasicQuote):
+        def __init__(self, env):
+            super().__init__()
+            self.cache = tmp_path / "private"
+
+    monkeypatch.setattr(kis, "KISClient", CLIClient)
+    target = tmp_path / "collected"
+    assert (
+        kis.main(["collect", "--env", "real", "--probe", str(a.folder), "--output", str(target)])
+        == 2
+    )
+    manifest = json.loads(next(target.glob("*/manifest.json")).read_text())
+    assert manifest["identity_source"] == "basic-quote"
+    assert all(p["endpoint"] != "search-info" for p in manifest["pages"])

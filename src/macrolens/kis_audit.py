@@ -70,6 +70,9 @@ def split_diagnostic(before, after, adjusted_before, adjusted_after, *, modp="0"
 
 def audit_archive(folder, meta):
     folder = Path(folder)
+    identity_source = meta.get("identity_source", "overseas")
+    if identity_source not in ("overseas", "basic-quote"):
+        raise KISError("unknown_identity_source")
     pages = []
     for record in meta["pages"]:
         pages.append((record, public_payload((folder / record["file"]).read_bytes())))
@@ -102,6 +105,7 @@ def audit_archive(folder, meta):
             ],
         )
         prices, price_groups, identity, rights, ice = {"0": [], "1": []}, {}, {}, [], []
+        basic, quote = {}, {}
         for record, body in pages:
             params = record["params"]
             if params.get("SYMB", params.get("PDNO")) != ticker:
@@ -111,6 +115,16 @@ def audit_archive(folder, meta):
                 identity = body.get("output", {})
                 if isinstance(identity, list):
                     identity = identity[0] if len(identity) == 1 else {}
+            elif endpoint in ("basic-info", "price-detail"):
+                output = body.get("output", {})
+                if isinstance(output, list):
+                    output = output[0] if len(output) == 1 else {}
+                if not isinstance(output, dict):
+                    output = {}
+                if endpoint == "basic-info":
+                    basic = output
+                else:
+                    quote = output
             elif endpoint == "dailyprice":
                 modp, label = params["MODP"], record["label"]
                 group = price_groups.setdefault((modp, label), [])
@@ -149,7 +163,19 @@ def audit_archive(folder, meta):
                     ice.extend(rows(body, "output1"))
                 except KISError:
                     issues.append("ICE 권리 배열 형식 오류")
-        if not isinstance(identity, dict) or identity.get("tr_crcy_cd") != "USD":
+        if identity_source == "basic-quote":
+            # Both independent official responses must agree; never fill identity from a ticker.
+            identity = {"basic_info": basic, "price_detail": quote}
+            if basic.get("pdno") != ticker or basic.get("prdt_type_cd") != meta["product_type"]:
+                issues.append("공통 상품기본조회 상품번호/상품유형 불일치 또는 미확인")
+            if quote.get("curr") != "USD":
+                issues.append("현재가상세 USD 통화 미확인")
+            if quote.get("rsym") != "D" + meta["exchange"] + ticker:
+                issues.append("현재가상세 거래소/상품 식별 불일치 또는 미확인")
+            limits.append(
+                "현재 식별 자료: 과거 상장/분류 보증 아님; 현재가를 과거 가격에 사용하지 않음"
+            )
+        elif not isinstance(identity, dict) or identity.get("tr_crcy_cd") != "USD":
             issues.append("상품 식별 또는 USD 통화 미확인")
         elif (
             identity.get("ovrs_excg_cd")
@@ -191,7 +217,7 @@ def audit_archive(folder, meta):
                 prices[modp].extend(chosen)
         # Price preflight allows further evidence collection, never total-return approval.
         price_ready = not issues and not any(
-            f["ticker"] == ticker and ("modp" in f["stream"] or f["stream"] == "identity")
+            f["ticker"] == ticker and ("modp" in f["stream"] or f["stream"].startswith("identity"))
             for f in meta["failures"]
         )
         probe_prices_ok &= price_ready
