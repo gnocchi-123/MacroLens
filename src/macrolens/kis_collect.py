@@ -13,6 +13,7 @@ CONTRACT = "kis-quotes-v1"
 SOURCE_COMMIT = "3a9be59a3ed8745720dc3aa9d584bdf3b7830362"
 DEFAULT_START = "2020-06-01"
 DEFAULT_END = "2026-09-30"
+PRICE_PAGINATION = "date-boundary-v1"
 
 
 def day(text):
@@ -82,6 +83,7 @@ class Archive:
             "exchange": exchange,
             "product_type": product,
             "identity_source": identity_source,
+            "price_pagination": PRICE_PAGINATION,
             "start": start,
             "end_inclusive": end,
             "evaluation_start": "2021-06-07",
@@ -141,11 +143,37 @@ class Archive:
         self.meta["failures"].append({"ticker": ticker, "stream": stream, "code": code})
 
 
+def price_boundary_overlap(page, cursor, previous=None):
+    """Validate date progress; accept only an identical, single boundary row.
+
+    Raw pages remain intact. Callers must record any boundary normalization.
+    BYMD inclusivity is not assumed: use the oldest returned date as next BYMD.
+    """
+    if not page:
+        raise KISError("empty_price_page_partial")
+    dates = [day(r.get("xymd")) for r in page]
+    if dates != sorted(dates, reverse=True) or len(set(dates)) != len(dates):
+        raise KISError("unsorted_or_duplicate_price_page")
+    if previous is not None:
+        if cursor != day(previous[-1].get("xymd")):
+            raise KISError("unexpected_price_date_cursor")
+        if dates[0] > cursor:
+            raise KISError("overlapping_or_conflicting_prices")
+    elif dates[0] > cursor:
+        raise KISError("price_after_requested_cursor")
+    overlap = previous is not None and dates[0] == cursor
+    if overlap and page[0] != previous[-1]:
+        raise KISError("overlapping_or_conflicting_prices")
+    if previous is not None and dates[-1] >= cursor:
+        raise KISError("date_cursor_stalled")
+    return overlap
+
+
 def price_pages(client, archive, ticker, modp, start, end, label, max_pages=100):
     # BYMD is a base date; the example does not promise inclusive/exclusive semantics.
     # Ask one calendar day later, retain raw rows, and filter the target interval in audit.
     cursor = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
-    continuation, seen_dates, seen_pages = "", set(), set()
+    previous, seen_pages = None, set()
     for _ in range(max_pages):
         params = {
             "AUTH": "",
@@ -155,7 +183,7 @@ def price_pages(client, archive, ticker, modp, start, end, label, max_pages=100)
             "BYMD": cursor.replace("-", ""),
             "MODP": modp,
         }
-        data, cont = archive.request(client, "dailyprice", params, label, continuation)
+        data, _ = archive.request(client, "dailyprice", params, label)
         page = rows(data, "output2")
         signature = sha(json.dumps(page, sort_keys=True).encode())
         if not page:
@@ -163,14 +191,8 @@ def price_pages(client, archive, ticker, modp, start, end, label, max_pages=100)
         if signature in seen_pages:
             raise KISError("repeated_price_page")
         seen_pages.add(signature)
+        price_boundary_overlap(page, cursor, previous)
         dates = [day(r.get("xymd")) for r in page]
-        if dates != sorted(dates, reverse=True) or len(set(dates)) != len(dates):
-            raise KISError("unsorted_or_duplicate_price_page")
-        if max(dates) > cursor:
-            raise KISError("price_after_requested_cursor")
-        if set(dates) & seen_dates:
-            raise KISError("overlapping_or_conflicting_prices")
-        seen_dates.update(dates)
         if min(dates) <= start:
             archive.meta["streams"].append(
                 {
@@ -183,15 +205,13 @@ def price_pages(client, archive, ticker, modp, start, end, label, max_pages=100)
                 }
             )
             return
-        if cont in ("M", "F"):
-            # Follow the official continuation contract first; same BYMD, tr_cont=N.
-            continuation = "N"
-        else:
-            # Date cursor fallback is verified by returned dates and calendar coverage.
-            next_cursor = (date.fromisoformat(min(dates)) - timedelta(days=1)).isoformat()
-            if next_cursor >= cursor:
-                raise KISError("date_cursor_stalled")
-            cursor, continuation = next_cursor, ""
+        # A fresh date-window request, irrespective of tr_cont. Reusing BYMD with N
+        # repeated the same page in the user's real run. Preserve response headers
+        # as evidence, but require actual date progress rather than trusting them.
+        next_cursor = min(dates)
+        if next_cursor >= cursor:
+            raise KISError("date_cursor_stalled")
+        cursor, previous = next_cursor, page
     raise KISError("price_page_limit_partial")
 
 
@@ -315,7 +335,11 @@ def finish(archive, result):
         "백테스트·총수익 검증 결과가 아닙니다.",
         "",
         f"상태: {result['status']} / {result['evidence_kind']}",
-        f"소량 점검 후 전체 수집 가능: {result.get('can_collect', False)}",
+        (
+            f"소량 점검 후 전체 수집 가능: {result.get('can_collect', False)}"
+            if archive.meta["mode"] == "probe"
+            else "전체 수집 기록: can_collect는 적용 대상 아님 (probe 전용 표시)."
+        ),
         "상품 식별 경로: " + archive.meta.get("identity_source", "overseas"),
         (
             "소량 가격 구간: 2020-06-01~06-10 및 2026-09-21~09-30. "
@@ -337,6 +361,22 @@ def finish(archive, result):
         )
     for ticker, info in result["symbols"].items():
         lines.extend(["", ticker + ": " + "; ".join(info["issues"] + info["limits"])])
+        for coverage in info["coverage"]:
+            lines.append(
+                f"- {coverage['label']}/MODP={coverage['modp']}: "
+                f"요청 {coverage['start']}~{coverage['end']}, "
+                f"결측 {len(coverage['missing_sessions'])}, "
+                f"비거래일 {len(coverage['unexpected_dates'])}"
+            )
+    if result["automatic_corrections"]:
+        lines.extend(
+            [
+                "",
+                f"동일한 가격 경계 행 {len(result['automatic_corrections'])}건을 "
+                "정규화 결과에서 한 번씩 집계했습니다. 원본은 변경하지 않았으며 "
+                "양쪽 원본 파일·날짜는 audit.json의 automatic_corrections에 기록했습니다.",
+            ]
+        )
     lines += [
         "",
         "strict_point_in_time=false. 원본·페이지·날짜·공식 대조는 audit.json 참조.",

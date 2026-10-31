@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 
 from .kis_client import KISError, public_payload
-from .kis_collect import SAMPLE, day, rows
+from .kis_collect import PRICE_PAGINATION, SAMPLE, day, price_boundary_overlap, rows
 from .price_issuer import parse_distributions
 from .price_quality import trading_sessions
 
@@ -73,6 +73,8 @@ def audit_archive(folder, meta):
     identity_source = meta.get("identity_source", "overseas")
     if identity_source not in ("overseas", "basic-quote"):
         raise KISError("unknown_identity_source")
+    if meta.get("price_pagination") not in (None, PRICE_PAGINATION):
+        raise KISError("unknown_price_pagination")
     pages = []
     for record in meta["pages"]:
         pages.append((record, public_payload((folder / record["file"]).read_bytes())))
@@ -106,6 +108,7 @@ def audit_archive(folder, meta):
         )
         prices, price_groups, identity, rights, ice = {"0": [], "1": []}, {}, {}, [], []
         basic, quote = {}, {}
+        previous_prices = {}
         for record, body in pages:
             params = record["params"]
             if params.get("SYMB", params.get("PDNO")) != ticker:
@@ -133,6 +136,31 @@ def audit_archive(folder, meta):
                 except KISError:
                     issues.append("가격 배열 형식 오류")
                     continue
+                if meta.get("price_pagination") == PRICE_PAGINATION:
+                    previous, previous_file = previous_prices.get((modp, label), (None, None))
+                    original_rows = source_rows
+                    try:
+                        if record["tr_cont_request"]:
+                            raise KISError("unexpected_price_continuation")
+                        overlap = price_boundary_overlap(source_rows, day(params["BYMD"]), previous)
+                        if overlap:
+                            result["automatic_corrections"].append(
+                                {
+                                    "kind": "identical_price_boundary_counted_once",
+                                    "ticker": ticker,
+                                    "modp": modp,
+                                    "label": label,
+                                    "date": day(source_rows[0]["xymd"]),
+                                    "retained_source": previous_file,
+                                    "overlap_source": record["file"],
+                                    "raw_modified": False,
+                                }
+                            )
+                            source_rows = source_rows[1:]
+                    except KISError as exc:
+                        issues.append("가격 페이지 진행 검증 실패: " + str(exc))
+                    if original_rows:
+                        previous_prices[modp, label] = original_rows, record["file"]
                 header = body.get("output1")
                 rsym = header.get("rsym", "") if isinstance(header, dict) else ""
                 if rsym != "D" + meta["exchange"] + ticker:

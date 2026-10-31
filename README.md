@@ -466,3 +466,37 @@ KIS 설명(민감값 검사·일부 생략): <서버 설명 중 안전하게 표
 필요한 경우에만 `--endpoint basic-info` 또는 `search-info`, `dailyprice`와
 `--symbol XLC` 또는 `XLK`를 명시해 한 번씩 비교할 수 있습니다. 지금은 기본 명령 하나만 실행합니다.
 일반 auth/probe/collect/recheck의 오류 메시지 정책·판정 기준은 그대로입니다.
+
+### 전체 수집에서 repeated_price_page가 나온 경우 (2026-10-31)
+
+사용자 실제 실행에서 상품 식별은 통과했지만, 가격은 중복을 포함한 198행씩에 그쳤고
+2020-06-01~2026-09-30 전체 기간은 확보되지 않았다. 다음 페이지에 같은 BYMD와 tr_cont=N을
+보내던 방식을 수정했다. 이제 가장 오래된 반환 날짜를 다음 BYMD로 보내는 새 조회를 한다.
+기준일 포함/제외를 추정하지 않고, 두 페이지의 경계 행이 전체 필드까지 동일하며 날짜가
+과거로 진행할 때만 한 번 집계한다. 양쪽 원문은 유지하고 audit.json의 automatic_corrections에
+이 처리를 기록한다. 반복 페이지·날짜 정체·값 충돌·중복은 계속 보류한다.
+이 수정은 합성 응답으로 검증했으며 실제 재수집 성공 여부는 새 보고서에서 확인해야 한다.
+
+이미 성공한 아래 probe를 재사용할 수 있다. 실패한 collect 폴더는 삭제하거나 수정하지 않는다.
+
+```bash
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv run --locked --extra price-audit python -m macrolens.kis collect \
+  --env real --probe data/kis/20261031T110803Z-5727f5301451
+```
+
+새 보고서에 세 상품 모두 MODP 0/1 각각 2020-06-01~2026-09-30,
+거래일 결측 0·비거래일 0인지 확인한다. 현재 고정 달력에서 예상 고유 거래일은 각각 1,592개다.
+이는 실제 확보 행 수가 아닌 검수 기대값이다. repeated_price_page 등 오류가 남으면 재수집을
+반복하지 말고 보고서를 확인한다. 권리·조정·운용사 대조가 남아 held일 수 있다.
+collect의 can_collect=false/종료 코드 2는 승인 실패와 수집 오류를 구분하지 않으므로
+report.md의 실제 범위·결측·사유로 판별한다. 해당 값은 probe에서만 전체 수집 허용을 뜻한다.
+저장 원본 재검수는 다음 명령으로 하며 네트워크/키 없이 새 검수 폴더를 만든다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis recheck data/kis/<새-전체수집-ID>
+```
+
+recheck: matched는 같은 원본의 재검수 일치이며 가격 적격성 승인이 아니다.
+이전 실패 기록을 recheck해도 없는 과거 가격은 생기지 않는다. 12개 확대·백테스트는 아직 하지 않는다.

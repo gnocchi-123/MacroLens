@@ -243,6 +243,87 @@ def test_page_limit_is_partial_not_success(tmp_path):
     assert not a.meta["streams"]
 
 
+@pytest.mark.parametrize("header", ["M", "F", ""])
+@pytest.mark.parametrize("inclusive", [True, False])
+def test_date_windows_ignore_continuation_and_cover_inclusive_or_exclusive_bymd(
+    tmp_path, header, inclusive
+):
+    class DateWindowMarket(FakeMarket):
+        def get(self, endpoint, p, continuation=""):
+            data, _, _ = super().get(endpoint, p, continuation)
+            if endpoint == "dailyprice" and not inclusive:
+                data["output2"] = [r for r in data["output2"] if r["xymd"] < p["BYMD"]]
+            return data, json.dumps(data).encode(), header
+
+    a, client = archive(tmp_path), DateWindowMarket()
+    kis_collect.price_pages(client, a, "XLK", "0", "2020-06-01", "2026-09-30", "full")
+    assert a.meta["streams"][0]["pagination"] == "reached_start"
+    assert all(cont == "" for _, _, cont in client.calls)
+    cursors = [p["BYMD"] for _, p, _ in client.calls]
+    assert all(b < a for a, b in zip(cursors, cursors[1:]))
+    for previous, current in zip(a.meta["pages"], a.meta["pages"][1:]):
+        raw = json.loads((a.folder / previous["file"]).read_bytes())["output2"]
+        assert current["params"]["BYMD"] == raw[-1]["xymd"]
+    result, normalized = kis_audit.audit_archive(a.folder, a.meta)
+    coverage = result["symbols"]["XLK"]["coverage"][0]
+    assert not coverage["missing_sessions"] and not coverage["unexpected_dates"]
+    assert result["symbols"]["XLK"]["prices"]["0"] == {
+        "rows": 1592,
+        "first": "2020-06-01",
+        "last": "2026-09-30",
+    }
+    assert len(normalized["XLK"]["prices_by_modp"]["0"]) == 1592
+    changes = result["automatic_corrections"]
+    assert len(changes) == (len(a.meta["pages"]) - 1 if inclusive else 0)
+    for change in changes:
+        assert not change["raw_modified"]
+        before = json.loads((a.folder / change["retained_source"]).read_bytes())["output2"]
+        after = json.loads((a.folder / change["overlap_source"]).read_bytes())["output2"]
+        assert before[-1] == after[0]
+    kis_collect.finish(a, result)
+    original = {p.name: p.read_bytes() for p in a.folder.iterdir()}
+    replay, _ = kis.recheck(a.folder, tmp_path / "replay")
+    assert replay["recheck"]["matched"]
+    assert replay["automatic_corrections"] == changes
+    assert original == {p.name: p.read_bytes() for p in a.folder.iterdir()}
+
+
+@pytest.mark.parametrize("kind", ["conflicting_boundary", "stalled", "duplicate_in_page"])
+def test_date_boundary_conflicts_and_stalls_remain_held(tmp_path, kind):
+    class BadBoundary(FakeMarket):
+        def get(self, endpoint, p, continuation=""):
+            data, _, cont = super().get(endpoint, p, continuation)
+            if len(self.calls) == 2:
+                if kind == "conflicting_boundary":
+                    data["output2"][0]["tvol"] = "999"
+                elif kind == "stalled":
+                    data["output2"] = data["output2"][:1]
+                else:
+                    data["output2"].insert(0, dict(data["output2"][0]))
+            return data, json.dumps(data).encode(), cont
+
+    a = archive(tmp_path)
+    with pytest.raises(KISError, match="conflicting|stalled|duplicate"):
+        kis_collect.price_pages(BadBoundary(), a, "XLK", "0", "2020-06-01", "2026-09-30", "full")
+    assert len(a.meta["pages"]) == 2
+    result, _ = kis_audit.audit_archive(a.folder, a.meta)
+    assert result["symbols"]["XLK"]["status"] == "held"
+    assert not result["automatic_corrections"]
+    assert any("가격 페이지 진행 검증 실패" in s for s in result["symbols"]["XLK"]["issues"])
+
+
+def test_legacy_duplicate_archive_is_not_silently_repaired(tmp_path):
+    a = archive(tmp_path)
+    del a.meta["price_pagination"]
+    with pytest.raises(KISError, match="repeated_price_page"):
+        kis_collect.price_pages(
+            FakeMarket(repeat=True), a, "XLK", "0", "2020-06-01", "2026-09-30", "full"
+        )
+    result, _ = kis_audit.audit_archive(a.folder, a.meta)
+    assert not result["automatic_corrections"]
+    assert "동일 일자 중복/충돌; 자동 제거하지 않음" in result["symbols"]["XLK"]["issues"]
+
+
 def test_rights_cursor_stall_preserves_page(tmp_path):
     a = archive(tmp_path)
     with pytest.raises(KISError, match="rights_cursor_stalled"):
