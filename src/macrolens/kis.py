@@ -96,6 +96,8 @@ def main(argv=None):
         default="price-detail",
     )
     diagnostic.add_argument("--output", type=Path, default=Path("data/kis_diagnostics"))
+    diagnostic.add_argument("--date", help="dailyprice 진단 대상 거래일 YYYY-MM-DD")
+    diagnostic.add_argument("--modp", choices=("0", "1"), help="dailyprice 수정주가 옵션; 기본 0")
     args = parser.parse_args(argv)
     try:
         if args.command == "diagnose":

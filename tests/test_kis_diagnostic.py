@@ -4,6 +4,7 @@ import io
 import json
 import socket
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -149,3 +150,103 @@ def test_auth_error_text_never_exposed_even_in_diagnostic_mode(monkeypatch):
         "POST", "https://example.test", {}, b"{}", 15, diagnostics=True
     )
     assert raw == b"{}"
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [
+        ("valid", "row_checks_passed"),
+        ("invalid", "invalid_price_row"),
+        ("missing", "target_missing"),
+        ("duplicate", "duplicate_target_rows"),
+        ("wrong_symbol", "symbol_unverified"),
+        ("bad_shape", "invalid_response_shape"),
+    ],
+)
+def test_target_date_diagnostic_one_get_preserves_raw_without_repair(
+    tmp_path, monkeypatch, capsys, kind, expected
+):
+    calls = []
+    # Deliberately synthetic prices; not the user's observed prices.
+    row = {
+        "xymd": "20230605",
+        "open": "100",
+        "high": "102",
+        "low": "99",
+        "clos": "101",
+        "tvol": "10",
+    }
+    if kind == "invalid":
+        row["low"] = "100.5"
+    payload = {"rt_cd": "0", "output1": {"rsym": "DAMSXLC"}, "output2": [row]}
+    if kind == "missing":
+        payload["output2"] = []
+    elif kind == "duplicate":
+        payload["output2"] = [row, row]
+    elif kind == "wrong_symbol":
+        payload["output1"]["rsym"] = "DAMSSPY"
+    elif kind == "bad_shape":
+        payload["output2"] = {}
+    raw = json.dumps(payload).encode()
+
+    def send(method, url, headers, body, timeout):
+        if method == "POST":
+            return 200, {}, json.dumps({"access_token": TOKEN, "expires_in": 86400}).encode()
+        calls.append(url)
+        return 200, {"tr_cont": "M"}, raw
+
+    client = kis_client.KISClient("real", tmp_path / "cache", send=send, sleep=lambda _: None)
+    monkeypatch.setattr(kis_diagnostic, "KISClient", lambda env: client)
+    output = tmp_path / "diagnostics"
+    for modp in ("0", "1"):
+        assert (
+            kis.main(
+                [
+                    "diagnose",
+                    "--env",
+                    "real",
+                    "--endpoint",
+                    "dailyprice",
+                    "--symbol",
+                    "XLC",
+                    "--date",
+                    "2023-06-05",
+                    "--modp",
+                    modp,
+                    "--output",
+                    str(output),
+                ]
+            )
+            == 0
+        )  # Request success remains separate from row validation.
+        query = parse_qs(urlsplit(calls[-1]).query)
+        assert query["BYMD"] == ["20230606"] and query["MODP"] == [modp]
+    assert len(calls) == 2
+    saved = list(output.glob("*/diagnostic.json"))
+    assert len(saved) == 2
+    for path in saved:
+        record = json.loads(path.read_text())
+        assert record["price_date_check"]["status"] == expected
+        assert record["price_date_check"]["date"] == "2023-06-05"
+        assert not record["can_collect"]
+        assert (path.parent / "response.json").read_bytes() == raw
+        assert record["response_sha256"] == kis_diagnostic.sha(raw)
+        if kind == "invalid":
+            assert record["price_date_check"]["rows"][0]["reasons"] == ["low_above_open_or_close"]
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--date", "2023-06-05"],
+        ["--modp", "1"],
+        ["--endpoint", "dailyprice", "--date", "2023-02-30"],
+    ],
+)
+def test_invalid_price_diagnostic_arguments_never_authenticate(monkeypatch, options):
+    def fail(env):
+        raise AssertionError("Must validate options before reading keys or authenticating")
+
+    monkeypatch.setattr(kis_diagnostic, "KISClient", fail)
+    assert kis.main(["diagnose", "--env", "real", *options]) == 1

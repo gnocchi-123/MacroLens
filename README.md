@@ -531,3 +531,37 @@ uv run --locked --extra price-audit python -m macrolens.kis recheck data/kis/<�
 상세 진단 추가는 audit.json 최상위 필드이므로 이전 보고서와 상품 판정이 같으면 recheck: matched가
 유지된다. matched는 원본 기반 판정 재현이며, held 자료를 적격으로 승인한다는 뜻이 아니다.
 새 보고서의 오류 관련 줄만 공유하면 된다. 인증 파일이나 전체 시장 원문을 공유할 필요가 없다.
+
+### 특정 거래일만 다시 조회하여 원본 오류 대조
+
+XLC 2023-06-05에 MODP 0/1 모두 시가보다 저가가 높은 행이 확인됐다(사용자 저장 보고서).
+기존 자료를 보정하거나 전체를 재수집하지 않고, 아래 명령으로 해당 날짜의 두 옵션을 각각
+한 번씩 조회할 수 있다. KIS 키가 있는 환경에서 실행하며 유효한 토큰을 재사용한다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis diagnose \
+  --env real --endpoint dailyprice --symbol XLC --date 2023-06-05 --modp 0
+uv run --locked --extra price-audit python -m macrolens.kis diagnose \
+  --env real --endpoint dailyprice --symbol XLC --date 2023-06-05 --modp 1
+```
+
+`--date`는 확인할 거래일이다. API 요청은 기준일 포함 여부를 추정하지 않도록 다음 달력일인
+BYMD=20230606으로 보내며, 한 응답에서 정확히 20230605인 행만 대조한다.
+원본 응답에는 다른 날짜도 있을 수 있고 그대로 보존하지만 추가 페이지를 받지는 않는다.
+`--date`/`--modp`는 dailyprice에서만 허용한다. 옵션 없는 기존 진단 동작은 유지한다.
+
+`request_succeeded`는 요청 성공이다. `대상 날짜` 줄의 별도 상태를 확인한다.
+
+| 날짜 검사 상태 | 의미 |
+| --- | --- |
+| invalid_price_row | 해당 날짜의 가격 내부 검사 실패. 대상 행의 reasons와 observed 확인 |
+| row_checks_passed | 그 한 행의 기존 가격 검사 통과. 원천 정확성/총수익 승인 아님 |
+| target_missing / duplicate_target_rows | 해당 날짜 없음 / 여러 행 반환. 정상 한 행으로 취급하지 않음 |
+| symbol_unverified / invalid_response_shape | 응답 상품 미확인 / 가격 배열 형식 이상 |
+
+GET은 명령당 1회, 실패 재시도 없음. 진단 결과는 data/kis_diagnostics의 서로 다른 새 폴더에
+원문·공개 요청 조건·수집 시각·해시와 함께 보존한다. 기존 data/kis 원본과 판정은 수정하지 않는다.
+종료 코드는 기존대로 HTTP/API 요청 성공 여부 기준이므로 대상 날짜 상태도 반드시 읽어야 한다.
+새 응답도 같은 모순이면 반복 다운로드하지 말고 KIS에 시가/저가 집계 범위·원천값 정정을 확인한다.
+다른 값이 나오더라도 자동 교체하지 않고 두 수집 시점과 원문을 함께 검토한다.
+모든 경로에서 can_collect=false이며 백테스트·12개 확대를 승인하지 않는다.
