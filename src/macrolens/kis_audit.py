@@ -2,12 +2,62 @@
 
 import json
 import math
+import re
 from pathlib import Path
 
 from .kis_client import KISError, public_payload
 from .kis_collect import PRICE_PAGINATION, SAMPLE, day, price_boundary_overlap, rows
 from .price_issuer import parse_distributions
 from .price_quality import trading_sessions
+
+
+def price_row_check(row):
+    """Explain the existing price checks without repairing values or relaxing rules."""
+    item, errors = {}, []
+    try:
+        item["date"] = day(row.get("xymd"))
+    except KISError:
+        errors.append("invalid_date:xymd")
+    for field in ("open", "high", "low", "clos", "tvol"):
+        if field not in row:
+            errors.append("missing_field:" + field)
+            continue
+        try:
+            value = float(row[field])
+        except (ValueError, TypeError, OverflowError):
+            errors.append("not_numeric:" + field)
+            continue
+        if not math.isfinite(value):
+            errors.append("non_finite:" + field)
+        elif value < 0:
+            errors.append("negative:" + field)
+        elif field != "tvol" and value == 0:
+            errors.append("zero_price:" + field)
+        else:
+            item[field] = value
+    if all(field in item for field in ("open", "high", "low", "clos")):
+        if item["low"] > min(item["open"], item["clos"]):
+            errors.append("low_above_open_or_close")
+        if item["high"] < max(item["open"], item["clos"]):
+            errors.append("high_below_open_or_close")
+    return item, errors
+
+
+def price_diagnostic_value(row, field):
+    # Show only small numeric literals. Arbitrary text/objects stay in the checked
+    # raw page, not in the shareable report. Preserve numeric strings as received.
+    if field not in row:
+        return "<missing>"
+    value = row[field]
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        text = str(value)
+        if len(text) <= 64 and re.fullmatch(
+            r"[+\-]?(?:[0-9.]+(?:[eE][+\-]?[0-9]+)?|inf(?:inity)?|nan)", text, re.I
+        ):
+            return text
+    return "<non_numeric_or_unsupported_value>"
 
 
 def optional_day(value):
@@ -94,6 +144,7 @@ def audit_archive(folder, meta):
         "strict_point_in_time": False,
         "total_return_eligible": False,
         "automatic_corrections": [],
+        "price_row_errors": [],
     }
     probe_prices_ok = True
     normalized = {}
@@ -136,6 +187,7 @@ def audit_archive(folder, meta):
                 except KISError:
                     issues.append("가격 배열 형식 오류")
                     continue
+                row_offset = 0
                 if meta.get("price_pagination") == PRICE_PAGINATION:
                     previous, previous_file = previous_prices.get((modp, label), (None, None))
                     original_rows = source_rows
@@ -157,6 +209,7 @@ def audit_archive(folder, meta):
                                 }
                             )
                             source_rows = source_rows[1:]
+                            row_offset = 1
                     except KISError as exc:
                         issues.append("가격 페이지 진행 검증 실패: " + str(exc))
                     if original_rows:
@@ -165,22 +218,29 @@ def audit_archive(folder, meta):
                 rsym = header.get("rsym", "") if isinstance(header, dict) else ""
                 if rsym != "D" + meta["exchange"] + ticker:
                     issues.append("가격 응답 종목 식별 미확인")
-                for row in source_rows:
-                    try:
-                        item = {"date": day(row.get("xymd")), "source_file": record["file"]}
-                        for field in ("open", "high", "low", "clos", "tvol"):
-                            item[field] = float(row[field])
-                            if not math.isfinite(item[field]) or item[field] < 0:
-                                raise ValueError
-                        if (
-                            min(item[f] for f in ("open", "high", "low", "clos")) <= 0
-                            or item["low"] > min(item["open"], item["clos"])
-                            or item["high"] < max(item["open"], item["clos"])
-                        ):
-                            raise ValueError
+                for source_row, row in enumerate(source_rows, start=row_offset + 1):
+                    item, errors = price_row_check(row)
+                    if not errors:
+                        item["source_file"] = record["file"]
                         group.append(item)
-                    except (KISError, ValueError, KeyError, TypeError):
+                    else:
                         issues.append("가격 날짜/숫자/OHLC 비정상; 원문 보존")
+                        result["price_row_errors"].append(
+                            {
+                                "ticker": ticker,
+                                "modp": modp,
+                                "label": label,
+                                "date": item.get("date"),
+                                "source_file": record["file"],
+                                "source_row_1based": source_row,
+                                "reasons": errors,
+                                "observed": {
+                                    f: price_diagnostic_value(row, f)
+                                    for f in ("xymd", "open", "high", "low", "clos", "tvol")
+                                },
+                                "raw_modified": False,
+                            }
+                        )
             elif endpoint == "period-rights":
                 try:
                     rights.extend(rows(body, "output"))

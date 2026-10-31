@@ -368,6 +368,25 @@ def finish(archive, result):
                 f"결측 {len(coverage['missing_sessions'])}, "
                 f"비거래일 {len(coverage['unexpected_dates'])}"
             )
+            missing = coverage["missing_sessions"]
+            if missing:
+                lines.append(
+                    "  - 결측 날짜(최대 10개): "
+                    + ", ".join(missing[:10])
+                    + ("; 전체 목록은 audit.json 참조" if len(missing) > 10 else "")
+                )
+        errors = [e for e in result.get("price_row_errors", []) if e["ticker"] == ticker]
+        for error in errors[:10]:
+            lines.append(
+                f"- 가격 행 오류: {error['date'] or '날짜 해석 불가'} / MODP={error['modp']} / "
+                f"{error['source_file']} output2[{error['source_row_1based']}번째 행] / "
+                + ", ".join(error["reasons"])
+            )
+            lines.append("  - 관측 필드: " + json.dumps(error["observed"], ensure_ascii=False))
+        if len(errors) > 10:
+            lines.append(
+                f"- 가격 행 오류 총 {len(errors)}건: 전체는 audit.json의 price_row_errors 참조"
+            )
     if result["automatic_corrections"]:
         lines.extend(
             [

@@ -500,3 +500,34 @@ uv run --locked --extra price-audit python -m macrolens.kis recheck data/kis/<�
 
 recheck: matched는 같은 원본의 재검수 일치이며 가격 적격성 승인이 아니다.
 이전 실패 기록을 recheck해도 없는 과거 가격은 생기지 않는다. 12개 확대·백테스트는 아직 하지 않는다.
+
+### 가격 날짜/숫자/OHLC 비정상: 저장 원본으로 원인 확인
+
+전체를 다시 다운로드하기 전에 해당 실행을 오프라인으로 재검수한다. 아래 `<전체수집-ID>`는
+방금 collect가 출력한 `data/kis/…/report.md` 경로에서 가져온다. 이전 실패 실행이나 probe ID를
+대신 넣지 않는다. 저장 폴더는 그대로 보존하고 별도 새 폴더에 상세 보고서를 쓴다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis recheck data/kis/<전체수집-ID>
+```
+
+이 명령은 키·인증·API 호출 없이 원본 해시를 확인하고 읽는다. 새 report.md의 `결측 날짜`,
+`가격 행 오류`, `관측 필드` 줄에 날짜/옵션/원본 파일/output2 내 1부터 시작하는 행 번호를 표시한다.
+전체 오류는 audit.json 최상위 `price_row_errors`에 있다. 숫자 형태의 짧은 값만 보고서에 표시하고,
+해석 불가 문자열/객체는 `<non_numeric_or_unsupported_value>`로 표시한다. 원문은 보존한다.
+경계 행 한 번 집계 이후에도 행 번호는 원본 JSON의 위치다.
+
+| 필드/오류 | 뜻 |
+| --- | --- |
+| open / high / low / clos / tvol | 시가 / 고가 / 저가 / 종가 / 거래량 |
+| missing_field / not_numeric / non_finite | 필드 없음 / 숫자로 해석 불가 / NaN·무한값 |
+| zero_price / negative | 0인 가격 / 음수 값 (거래량 0은 기존대로 허용) |
+| low_above_open_or_close | 저가가 시가 또는 종가보다 높음 |
+| high_below_open_or_close | 고가가 시가 또는 종가보다 낮음 |
+| invalid_date | 유효한 거래일자로 해석 불가 |
+
+검사 기준은 완화하지 않고 값 보정·결측 채우기도 하지 않는다. 오류 행이 존재한다는 사실과
+그 날짜가 목표 기간의 결측 원인인지는 새 보고서에서 날짜를 대조해야 한다.
+상세 진단 추가는 audit.json 최상위 필드이므로 이전 보고서와 상품 판정이 같으면 recheck: matched가
+유지된다. matched는 원본 기반 판정 재현이며, held 자료를 적격으로 승인한다는 뜻이 아니다.
+새 보고서의 오류 관련 줄만 공유하면 된다. 인증 파일이나 전체 시장 원문을 공유할 필요가 없다.

@@ -324,6 +324,89 @@ def test_legacy_duplicate_archive_is_not_silently_repaired(tmp_path):
     assert "동일 일자 중복/충돌; 자동 제거하지 않음" in result["symbols"]["XLK"]["issues"]
 
 
+@pytest.mark.parametrize(
+    "field, value, reason",
+    [
+        ("xymd", "20260230", "invalid_date:xymd"),
+        ("open", "0", "zero_price:open"),
+        ("tvol", "-1", "negative:tvol"),
+        ("clos", None, "not_numeric:clos"),
+        ("clos", "NaN", "non_finite:clos"),
+        ("clos", "Infinity", "non_finite:clos"),
+        ("clos", "invalid\nPRIVATE_TEXT", "not_numeric:clos"),
+        ("low", "101", "low_above_open_or_close"),
+        ("high", "99", "high_below_open_or_close"),
+    ],
+)
+def test_price_row_diagnostics_keep_rejections_and_limit_display(field, value, reason):
+    row = {
+        "xymd": "20260925",
+        "open": "100",
+        "high": "100",
+        "low": "100",
+        "clos": "100",
+        "tvol": "0",
+    }
+    row[field] = value
+    _, errors = kis_audit.price_row_check(row)
+    assert reason in errors
+    display = {f: kis_audit.price_diagnostic_value(row, f) for f in row}
+    assert "PRIVATE_TEXT" not in json.dumps(display, allow_nan=False)
+    del row["open"]
+    assert "missing_field:open" in kis_audit.price_row_check(row)[1]
+    assert kis_audit.price_diagnostic_value(row, "open") == "<missing>"
+
+
+def test_xlc_invalid_row_is_explained_offline_without_changing_legacy_verdict(tmp_path):
+    class BadPrice(FakeMarket):
+        def get(self, endpoint, p, continuation=""):
+            data, _, cont = super().get(endpoint, p, continuation)
+            if endpoint == "dailyprice" and p["SYMB"] == "XLC":
+                for row in data["output2"]:
+                    if row["xymd"] == "20260420":
+                        row["high"] = "99"  # Synthetic inconsistency, not a real XLC observation.
+            return data, json.dumps(data).encode(), cont
+
+    a = archive(tmp_path / "original")
+    kis_collect.collect(BadPrice(), a)
+    result, _ = kis_audit.audit_archive(a.folder, a.meta)
+    errors = result["price_row_errors"]
+    assert len(errors) == 2
+    assert {e["modp"] for e in errors} == {"0", "1"}
+    for error in errors:
+        assert error["date"] == "2026-04-20" and error["ticker"] == "XLC"
+        assert error["reasons"] == ["high_below_open_or_close"]
+        assert error["observed"]["high"] == "99"
+        assert not error["raw_modified"]
+        raw = json.loads((a.folder / error["source_file"]).read_bytes())
+        row = raw["output2"][error["source_row_1based"] - 1]
+        assert row["xymd"] == "20260420" and row["high"] == "99"
+    for coverage in result["symbols"]["XLC"]["coverage"]:
+        assert coverage["missing_sessions"] == ["2026-04-20"]
+    for ticker in kis_collect.SAMPLE:
+        for modp in ("0", "1"):
+            assert result["symbols"][ticker]["prices"][modp]["rows"] == (
+                1591 if ticker == "XLC" else 1592
+            )
+    kis_collect.finish(a, result)
+    report = (a.folder / "report.md").read_text()
+    assert "결측 날짜(최대 10개): 2026-04-20" in report
+    assert "가격 행 오류: 2026-04-20 / MODP=0" in report
+    assert "high_below_open_or_close" in report
+    # Simulate the prior diagnostic-free audit schema; verdict/price rows are unchanged.
+    del result["price_row_errors"]
+    (a.folder / "audit.json").write_text(json.dumps(result))
+    checks = json.loads((a.folder / "checksums.json").read_text())
+    checks["audit.json"] = kis_collect.sha((a.folder / "audit.json").read_bytes())
+    (a.folder / "checksums.json").write_text(json.dumps(checks))
+    original = {p.name: p.read_bytes() for p in a.folder.iterdir()}
+    replay, folder = kis.recheck(a.folder, tmp_path / "replay")
+    assert replay["recheck"]["matched"]
+    assert replay["price_row_errors"] == errors
+    assert "가격 행 오류:" in (folder / "report.md").read_text()
+    assert original == {p.name: p.read_bytes() for p in a.folder.iterdir()}
+
+
 def test_rights_cursor_stall_preserves_page(tmp_path):
     a = archive(tmp_path)
     with pytest.raises(KISError, match="rights_cursor_stalled"):
