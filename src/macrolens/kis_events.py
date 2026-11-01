@@ -39,8 +39,30 @@ def numeric_candidate(field, value, currency, dividend):
         status="numeric_equal_basis_unverified" if number == reference else "numeric_difference",
         delta_from_issuer_dividend=str(number - reference),
         ratio_to_issuer_dividend=str(number / reference) if reference else None,
+        precision_relation=(
+            "exact"
+            if number == reference
+            else "within_one_5dp_unit"
+            if abs(number - reference) <= Decimal("0.00001")
+            else "outside_one_5dp_unit"
+        ),
+        diagnostic_unit_usd="0.00001",
+        provider_rounding_rule_confirmed=False,
     )
     return item
+
+
+def primary_amount_relation(event, issuer_quality_issues):
+    """Describe one confirmed USD amount without requiring secondary ICE coverage."""
+    if issuer_quality_issues or event["period_record_date_candidates"] != 1:
+        return "unverified_or_ambiguous"
+    row = event["amount_candidates"][0]
+    if row["confirmation_code"] != "Y":
+        return "unverified_or_ambiguous"
+    candidates = [c for c in row["candidates"] if "precision_relation" in c]
+    if len(candidates) != 1:
+        return "unverified_or_ambiguous"
+    return candidates[0]["precision_relation"]
 
 
 def price_pair(prices, ex_date):
@@ -160,5 +182,24 @@ def review_events(prices, rights, ice, issuer):
         "capital_gains_unknown_events": sum(
             not e["capital_gains_complete"] for e in result["events"]
         ),
+    }
+    for event in result["events"]:
+        event["primary_amount_relation_basis_unverified"] = primary_amount_relation(event, quality)
+    result["summary"]["period_record_date_matches"] = sum(
+        e["period_record_date_candidates"] == 1 and not quality for e in result["events"]
+    )
+    result["summary"]["ice_three_date_matches"] = sum(
+        e["ice_three_date_matches"] == 1 and not quality for e in result["events"]
+    )
+    result["summary"]["primary_amount_relations_basis_unverified"] = {
+        relation: sum(
+            e["primary_amount_relation_basis_unverified"] == relation for e in result["events"]
+        )
+        for relation in (
+            "exact",
+            "within_one_5dp_unit",
+            "outside_one_5dp_unit",
+            "unverified_or_ambiguous",
+        )
     }
     return result

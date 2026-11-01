@@ -625,3 +625,24 @@ recheck: different일 수 있다. held/can_collect:false도 예상 가능하며 
 자세한 사건 날짜·금액 후보·통화·기준·가격 출처는 audit.json의 event_review에 있다.
 정확히 같은 새 저장 폴더를 issuer-file 없이 다시 recheck하면 상품 결과 matched를 기대한다.
 원자료/인증 파일을 채팅이나 공개 Git에 올리지 않는다. 12개 확대·백테스트는 아직 하지 않는다.
+
+### 배당 금액 일치 건수가 적을 때: 정밀도와 ICE 근거를 구분
+
+USD 숫자 '완전 일치'는 날짜·확정·통화 조건까지 결합된 엄격한 집계다. 나머지를 전부 잘못된
+배당금으로 해석하지 않는다. 사용자 표본에는 5자리 표시 수준의 작은 차이가 관찰됐지만,
+공식 반올림/절사 규칙과 주당 기준은 아직 미확인이다.
+
+아래 명령은 이미 공식 파일이 첨부된 실제 사용자 폴더를 읽는다. 가격·공식 파일 다운로드나
+긴 Python 출력 코드를 다시 실행할 필요가 없다.
+
+```bash
+git pull --ff-only origin feat/m4-kis-data
+uv run --locked --extra price-audit python -m macrolens.kis recheck \
+  data/kis/20261101T055700Z-9851ad4fe637
+```
+
+새 report.md의 상품별 `날짜 근거별`, `금액 후보(기준일만 대조·확정 USD 1개)` 줄을 확인한다.
+완전 일치 / 차이 0.00001달러 이내 / 범위 초과 / 미확인·복수 후보를 별개로 보여준다.
+0.00001 USD는 표시 정밀도 진단 단위이며, 품질 승인 허용 오차가 아니다. 작은 차이도 원문과
+delta를 유지하고 numeric_difference를 지우지 않는다. 주당 기준과 자본이득 빈 값도 미확인 상태다.
+이전 상품 판정과 같으면 recheck: matched일 수 있으며 기존 held/conditional을 강제로 바꾸지 않는다.

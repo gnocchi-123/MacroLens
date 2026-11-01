@@ -967,3 +967,57 @@ def test_issuer_attachment_recheck_is_offline_and_retains_price_verdict(tmp_path
     assert original == {p.name: p.read_bytes() for p in a.folder.iterdir()}
     report = (folder / "report.md").read_text()
     assert "배당·조정 대조 XLC:" in report and "XLK 분할 대조" in report
+
+
+@pytest.mark.parametrize(
+    "value,reference,relation",
+    [
+        ("0.12345", "0.123450", "exact"),
+        ("0.12346", "0.123456", "within_one_5dp_unit"),
+        ("0.12345", "0.123456", "within_one_5dp_unit"),
+        ("0.12345", "0.123460", "within_one_5dp_unit"),
+        ("0.12345", "0.123461", "outside_one_5dp_unit"),
+        ("0.5", "1", "outside_one_5dp_unit"),
+    ],
+)
+def test_amount_precision_diagnostic_preserves_exact_comparison(value, reference, relation):
+    from macrolens.kis_events import numeric_candidate
+
+    result = numeric_candidate("alct_frcr_unpr", value, "USD", reference)
+    assert result["precision_relation"] == relation
+    assert result["status"] == (
+        "numeric_equal_basis_unverified" if relation == "exact" else "numeric_difference"
+    )
+    assert result["share_basis"] == "unknown"
+    assert not result["provider_rounding_rule_confirmed"]
+    assert result["diagnostic_unit_usd"] == "0.00001"
+
+
+def test_missing_ice_does_not_hide_primary_amount_evidence_or_approve_dates():
+    review, prices, rights, ice, issuer = event_fixture()
+    rights[0]["alct_frcr_unpr"] = "1.00000"
+    issuer["events_in_source_order"][0]["dividend"] = 1.000006
+    result = review(prices, rights, [], issuer)
+    summary = result["summary"]
+    assert summary["period_record_date_matches"] == 1
+    assert summary["ice_three_date_matches"] == summary["one_to_one_date_matches"] == 0
+    assert summary["unique_confirmed_usd_numeric_matches_basis_unverified"] == 0
+    assert summary["primary_amount_relations_basis_unverified"]["within_one_5dp_unit"] == 1
+    assert not result["events"][0]["date_match_only"] and not result["total_return_eligible"]
+
+
+@pytest.mark.parametrize("case", ["duplicate", "unconfirmed", "non_usd", "ambiguous"])
+def test_primary_amount_breakdown_keeps_unverified_candidates(case):
+    review, prices, rights, ice, issuer = event_fixture()
+    if case == "duplicate":
+        rights.append(dict(rights[0]))
+    elif case == "unconfirmed":
+        rights[0]["dfnt_yn"] = "N"
+    elif case == "non_usd":
+        rights[0]["crcy_cd"] = ""
+    else:
+        rights[0].update(crcy_cd2="USD", stkp_dvdn_frcr_amt2="1.0000")
+    result = review(prices, rights, ice, issuer)
+    summary = result["summary"]["primary_amount_relations_basis_unverified"]
+    assert summary["unverified_or_ambiguous"] == 1
+    assert summary["exact"] == summary["within_one_5dp_unit"] == 0

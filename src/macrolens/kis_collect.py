@@ -419,6 +419,21 @@ def finish(archive, result):
                 f"사건 전후 가격 쌍 {s['price_pairs_available']}, "
                 f"자본이득 빈 값 포함 사건 {s['capital_gains_unknown_events']}"
             )
+            lines.append(
+                f"- 날짜 근거별: 기간별권리 기준일 1:1 {s['period_record_date_matches']}, "
+                f"ICE 세 날짜 1:1 {s['ice_three_date_matches']}"
+            )
+            amounts = s["primary_amount_relations_basis_unverified"]
+            lines.append(
+                f"- 금액 후보(기준일만 대조·확정 USD 1개): 완전 일치 {amounts['exact']}, "
+                f"차이 0.00001달러 이내 {amounts['within_one_5dp_unit']}, "
+                f"범위 초과 {amounts['outside_one_5dp_unit']}, "
+                f"미확인/복수 후보 {amounts['unverified_or_ambiguous']}"
+            )
+            lines.append(
+                "- 위 금액 구분은 표시 정밀도 진단입니다. "
+                "원본·완전 일치 집계·주당 기준·품질 판정을 변경하지 않습니다."
+            )
             if review["issuer_quality_issues"]:
                 lines.append("- 운용사 파일 검사: " + "; ".join(review["issuer_quality_issues"]))
             pairs = [e["price_pair"] for e in review["events"] if "factor_step" in e["price_pair"]]

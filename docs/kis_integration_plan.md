@@ -415,3 +415,23 @@ MODP가 현금배당 재투자를 보장한다는 설명은 해당 문서에서 
 State Street의 XLK 상품 페이지에 있는 배당/자본이득 NAV 재투자 설명은 운용사 성과 정의이지 KIS 계약이 아니다.
 이전 원본의 수치 대조가 없는 현재 이를 해결됐다고 표시하지 않는다. 문의/유료 가입/전체 재수집 없이
 사용자가 저장 원본에 공식 XLSX를 붙여 얻는 결과를 다음 증거로 삼는다.
+
+### 17.1 표시 정밀도 진단과 근거별 집계 (2026-11-01)
+
+사용자 20261101T055700Z-9851ad4fe637의 표본 9건은 금액 차이가 최대 0.000006 USD이며,
+8건은 5자리 HALF_UP 반올림과 일치하고 XLK 최신 1건은 절사와 일치한다. 공급자 처리 규칙은 미확인이다.
+날짜 미완료 5건씩은 초기 구간에 집중되며 기준일 후보는 존재하지만 ICE 세 날짜 대응이 없다.
+
+기존 numeric_candidate.status와 엄격한 집계를 바꾸지 않고 precision_relation을 추가한다.
+USD/유한/비음수 후보에만 Decimal 절댓값 차이 기준 exact, within_one_5dp_unit(0<차이<=0.00001),
+outside_one_5dp_unit을 붙인다. provider_rounding_rule_confirmed=false와 share_basis=unknown을 유지한다.
+이는 공식 허용 오차나 승인 규칙이 아니다. 큰 차이·2배/절반 차이를 자동 정정하지 않는다.
+
+summary에 period_record_date_matches, ice_three_date_matches 및
+primary_amount_relations_basis_unverified를 추가한다. 마지막 집계는 기간별권리 기준일 후보1개·
+확정Y·유효 USD 후보1개·운용사 파일 품질 조건을 요구하되 ICE는 별도 근거로 표시한다.
+다른 통화·미확정·후보 중복·복수 USD 후보는 unverified_or_ambiguous로 남긴다.
+기존 three-date 게이트를 가진 숫자 완전 일치 건수도 유지한다. 기존 판정 완화가 아닌 설명의 분리다.
+
+새 전체 사건 분류는 저장된 원본과 이미 첨부된 XLSX의 recheck만으로 생성한다.
+원자료/기존 보고서·가격 판정·모델·계수·전략 설정을 변경하지 않는다.
