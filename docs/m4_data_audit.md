@@ -1,5 +1,7 @@
 # M4 가격 자료 확보·검수 기록
 
+2026-11-01 최신 상태: 사용자 Codespaces에서 세 상품 가격·권리를 확보했고, XLC 2023-06-05는 알려진 결측으로 유지한다. KIS 문의·반복 조회는 필수가 아니다. 이 환경에서는 공식 배당 XLSX(각 26건)를 새로 확보했으나 사용자 KIS 원본은 없어 실제 교차 대조는 미실시다. 원자료 판정과 결측 처리 조건을 붙인 연구 사용 가능성을 구분하며 백테스트는 시작하지 않았다.
+
 2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
 
 출처 조사·실제 다운로드: 2026-10-13 UTC. 최종 코드·문서 검수: 2026-10-17.
@@ -462,3 +464,74 @@ conditional을 총수익 적격 또는 M4 완료로 해석하지 않으며, 세 
 고가/저가 수정·전일 값 채움·종가만 사용하여 검사 우회·XLC 제외로 전체 통과 처리는 하지 않는다.
 공급자 회신을 기다리는 동안 가능한 독립 작업은 운용사 배당 XLSX 연결과 XLK 분할/배당 대조이다.
 그 대조가 XLC의 가격 모순까지 해결하는 것은 아니며 전체 적격성 승인과 구별한다.
+
+## 2026-11-01 최신 검수: 알려진 결측 방침과 공식 배당 자료
+
+### 사용자 합의와 원자료 판정의 분리
+
+[검증 설계 3.1절](m4_validation_design.md#31-사용자-합의-xlc-알려진-결측-처리-2026-11-01)에
+XLC 2023-06-05 두 옵션의 알려진 결측 방침을 기록했다. KIS 문의·반복 조회는 필수가 아니다.
+원자료 held·결측은 유지하고 해당 가격이 필요한 계산 및 해당 섹터 비교 시점을 향후 제외한다.
+다른 오류 허용·가격 채움·종가만 사용·날짜 이동·실제 제외 엔진·전략 계산은 구현하지 않았다.
+audit.json의 research_missing_policy는 이 합의를 설명하는 메타데이터이지 품질 승인 플래그가 아니다.
+
+### 이번 환경에서 직접 확인한 것
+
+- 경로 /workspace/MacroLens, feat/m4-kis-data, 시작 705b16c, 작업 트리 깨끗함.
+  원격 같은 브랜치도 705b16c, main은 8f6bfa0. AGENTS.md 없음.
+- 사용자 /workspaces/MacroLens의 data/kis·키는 이 환경에 없다. 실제 KIS API 호출 0회,
+  사용자 가격·권리 원본의 직접 대조/해시 검증은 미실시다.
+- 기존 issuer 명령으로 State Street 공식 XLSX를 HTTP 200으로 실제 다운로드했다.
+  `data/price_audit/20261101T054536Z-5a34adf9bc3c/issuer-distributions.xlsx`
+- 수집 시각 2026-11-01T05:45:36.557257+00:00 (한국시간 14:45:36), 581,234 bytes.
+  SHA-256: `f78e5b6a2aa94cd1b684ea875b0936fce892f895016bc0c3374353f78d21a771`.
+- 같은 파일을 issuer --file로 오프라인 다시 읽었다:
+  `data/price_audit/20261101T055048Z-88908b30debd/`. 다운로드/재읽기 배당 결과가 같으며 원본은 유지된다.
+  10월 13일 파일과 해시가 다르지만 그 원본이 없어 내용 변경 여부는 비교하지 않았다.
+
+| 상품 | 이번 공식 파일 전체 배당락일 범위 | 요청 구간 내 배당락일 범위 | 실제 배당 사건 수 | 빈 자본이득 셀 |
+| --- | --- | --- | ---: | ---: |
+| XLC | 2018-09-21~2026-09-21 | 2020-06-22~2026-09-21 | 26 | 41 |
+| XLK | 1999-12-17~2026-09-21 | 2020-06-22~2026-09-21 | 26 | 41 |
+| SPY | 1993-03-19~2026-09-18 | 2020-06-19~2026-09-18 | 26 | 42 |
+
+중복 배당락일·결측/음수/비유한 배당금은 발견되지 않았다. 채워진 자본이득 셀 중 양수는 없지만
+빈 셀을 0으로 간주하지 않는다. 이 수치는 배당 대조원 검수이며 KIS 권리의 정확성/완전성 인증이 아니다.
+
+### 이번 공식 문서 재확인과 한계
+
+공식 참조 원문/요청 시각/HTTP 상태/해시는 Git 제외
+`data/m4_references/20261101T054558Z-cb41e6d7ee74/sources.json`에 보존했다.
+
+- [State Street 약관](https://www.ssga.com/us/en/footer/terms-and-conditions): 개인 출력/합리적인 내부 사본
+  범위의 설명을 확인했다. 개인 검수용 원본만 저장하며 공개 재배포·무제한 수집 허가로 해석하지 않는다.
+  issuer request.json의 terms_review_date=2026-10-13은 도구의 기존 검토일이며 이번 별도 약관 방문은 sources.json에 있다.
+- [State Street 발표의 Nasdaq 재게시](https://www.nasdaq.com/press-release/state-street-investment-management-announces-share-splits-five-select-sector-spdrr):
+  XLK 2:1, 기준일 2025-12-02 장 마감, 지급 12-04 장 마감 후, 분할 가격 거래 12-05 재확인.
+  발표의 예상 가격을 실제 가격으로 사용하지 않았다. 사용자 저장 가격과의 직접 수치 대조는 미실시.
+- [State Street XLK 페이지](https://www.ssga.com/us/en/intermediary/etfs/state-street-technology-select-sector-spdr-etf-xlk):
+  배당/자본이득 재투자 성과 설명은 운용사 성과 정의다. KIS 조정 방식·과거 주당 배당 재작성 기준으로 전용하지 않았다.
+- KIS [dailyprice](https://github.com/koreainvestment/open-trading-api/blob/3a9be59a3ed8745720dc3aa9d584bdf3b7830362/examples_llm/overseas_stock/dailyprice/dailyprice.py),
+  [기간별권리 필드](https://github.com/koreainvestment/open-trading-api/blob/3a9be59a3ed8745720dc3aa9d584bdf3b7830362/examples_llm/overseas_stock/period_rights/chk_period_rights.py),
+  [ICE 필드](https://github.com/koreainvestment/open-trading-api/blob/3a9be59a3ed8745720dc3aa9d584bdf3b7830362/examples_llm/overseas_stock/rights_by_ice/chk_rights_by_ice.py):
+  수정주가 반영 여부, 배정외화단가/주당배당외화금액2~4 및 각 통화, 배당락일/기준일/지급일 명칭 확인.
+  현금배당 포함 조정·재투자 산식·분할 전 배당의 주당 기준은 여기서 확인되지 않았다.
+
+### 저장 자료로 실행할 수 있게 보완한 검수
+
+`kis recheck <기존 폴더> --issuer-file <공식 XLSX>`가 기존 명령 그대로 새 진단을 수행한다.
+날짜 1:1 대조, USD 금액 후보의 숫자 차이/비율, 자본이득 빈 셀, 사건 전후 종가/조정계수 변화를
+개인 audit.json의 event_review에 기록하고 report.md에 요약한다. 새 가격·배당을 만들어 넣지 않는다.
+숫자 일치는 주당 기준 확인과 구별하고, USD 아닌 값·누락·중복·예정 권리를 완료로 집계하지 않는다.
+전 거래일 가격이 없으면 마지막 가용일을 대신 쓰지 않는다. 배당을 조정가격에 더하지 않는다.
+XLK의 기존 분할 전후 진단은 MODP=0에만 2배 비율을 적용하고 MODP=1에는 재적용하지 않는다.
+어떤 결과도 total_return_eligible=true로 올리지 않으며 전략 수익률은 계산하지 않는다.
+
+이번 실제 KIS-운용사 일치 건수, 배당락일 조정계수 변화, XLK 실제 분할 전후 비율은 **미실시/미확인**이다.
+사용자 원본에 연결한 새 보고서가 있어야 답할 수 있다. 샘플 가격으로 이를 대신하지 않았다.
+기존 사용자 결과 XLC 1591/held, XLK·SPY 1592/conditional과 방침을 분리해 유지한다.
+다음 설계 검토에서는 공식 주당 기준·자본이득 빈 셀 의미·총수익 정의를 확인하고,
+원장 방식/조정계열 방식 중 무엇을 쓸지 결정해야 한다. 이 결정 전에는 배당을 임의 합산하지 않는다.
+
+이번 코드 검증은 합성/네트워크 차단 테스트 **219개 통과**, Ruff 검사·포맷 통과다.
+공식 XLSX 실제 다운로드/재읽기 검수와 구별한다. 동결 모델 해시·근거서·의존성은 변경하지 않았다.

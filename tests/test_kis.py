@@ -803,3 +803,167 @@ def test_collect_preserves_probe_identity_source_and_rejects_change(tmp_path, mo
     manifest = json.loads(next(target.glob("*/manifest.json")).read_text())
     assert manifest["identity_source"] == "basic-quote"
     assert all(p["endpoint"] != "search-info" for p in manifest["pages"])
+
+
+def event_fixture():
+    from macrolens.kis_events import review_events
+
+    event = {
+        "ex_date": "2025-12-08",
+        "record_date": "2025-12-09",
+        "payable_date": "2025-12-15",
+        "dividend": 1,
+        "short_term_gain": None,
+        "long_term_gain": 0,
+    }
+    rights = [
+        {
+            "acpl_bass_dt": "20251209",
+            "rght_type_cd": "03",
+            "dfnt_yn": "Y",
+            "crcy_cd": "USD",
+            "alct_frcr_unpr": "1.0000",
+        }
+    ]
+    ice = [{"div_lock_dt": "20251208", "record_dt": "20251209", "pay_dt": "20251215"}]
+    prices = {
+        "0": [
+            {"date": "2025-12-05", "clos": 100, "source_file": "raw-before.json"},
+            {"date": "2025-12-08", "clos": 99, "source_file": "raw-after.json"},
+        ],
+        "1": [
+            {"date": "2025-12-05", "clos": 99, "source_file": "adj-before.json"},
+            {"date": "2025-12-08", "clos": 99, "source_file": "adj-after.json"},
+        ],
+    }
+    return review_events, prices, rights, ice, {"events_in_source_order": [event]}
+
+
+def test_event_date_amount_evidence_never_approves_basis_or_adds_dividends():
+    review, prices, rights, ice, issuer = event_fixture()
+    before = json.dumps(prices)
+    result = review(prices, rights, ice, issuer)
+    event = result["events"][0]
+    assert event["date_match_only"]
+    assert (
+        event["amount_candidates"][0]["candidates"][0]["status"] == "numeric_equal_basis_unverified"
+    )
+    assert event["amount_and_share_basis"] == "unverified"
+    assert not event["capital_gains_complete"]
+    pair = event["price_pair"]
+    assert pair["previous_session"] == "2025-12-05"  # Friday, not Sunday or a shifted ex-date.
+    assert pair["modp1_close_ratio"] == 1 and pair["modp0_close_ratio"] == 0.99
+    assert pair["factor_step"] == pytest.approx(100 / 99)
+    assert not pair["dividend_added"] and not pair["split_applied_to_modp1"]
+    assert not result["total_return_eligible"] and json.dumps(prices) == before
+
+
+@pytest.mark.parametrize(
+    "value,currency,status",
+    [
+        (None, "USD", "missing_or_invalid_amount"),
+        ("", "USD", "missing_or_invalid_amount"),
+        ("NaN", "USD", "missing_or_invalid_amount"),
+        ("-1", "USD", "missing_or_invalid_amount"),
+        ("1", "KRW", "currency_unverified_or_not_usd"),
+        ("1", "", "currency_unverified_or_not_usd"),
+        ("0.5", "USD", "numeric_difference"),
+    ],
+)
+def test_rights_amount_candidates_do_not_assume_currency_zero_or_split_basis(
+    value, currency, status
+):
+    from macrolens.kis_events import numeric_candidate
+
+    candidate = numeric_candidate("alct_frcr_unpr", value, currency, 1)
+    assert candidate["status"] == status
+    assert candidate["share_basis"] == "unknown"
+    if value == "0.5":
+        assert candidate["ratio_to_issuer_dividend"] == "0.5"
+
+
+@pytest.mark.parametrize("problem", ["date", "duplicate_right", "duplicate_issuer", "empty_issuer"])
+def test_event_ambiguity_is_not_counted_as_one_to_one(problem):
+    review, prices, rights, ice, issuer = event_fixture()
+    if problem == "date":
+        ice[0]["pay_dt"] = "20251216"
+    elif problem == "duplicate_right":
+        rights.append(dict(rights[0]))
+    elif problem == "duplicate_issuer":
+        issuer["events_in_source_order"] *= 2
+    else:
+        issuer["events_in_source_order"] = []
+    result = review(prices, rights, ice, issuer)
+    assert result["summary"]["one_to_one_date_matches"] == 0
+    assert result["summary"]["unique_confirmed_usd_numeric_matches_basis_unverified"] == 0
+
+
+def test_missing_event_price_never_uses_last_available_day():
+    review, prices, rights, ice, issuer = event_fixture()
+    prices["0"][0]["date"] = "2025-12-04"
+    pair = review(prices, rights, ice, issuer)["events"][0]["price_pair"]
+    assert pair["status"] == "missing_or_duplicate_price"
+    assert "factor_step" not in pair
+
+
+def test_known_missing_policy_never_relaxes_other_errors(tmp_path):
+    a = archive(tmp_path, "probe")
+    kis_collect.collect(FakeMarket(missing_end=True), a)
+    result, _ = kis_audit.audit_archive(a.folder, a.meta)
+    policy = result["research_missing_policy"]
+    assert policy["date"] == "2023-06-05" and not policy["price_quality_override"]
+    assert not policy["other_errors_allowed"] and not policy["exclusion_engine_implemented"]
+    assert not result["can_collect"]
+    assert all(s["status"] == "held" for s in result["symbols"].values())
+    kis_collect.finish(a, result)
+    original = {p.name: p.read_bytes() for p in a.folder.iterdir()}
+    replay, _ = kis.recheck(a.folder, tmp_path / "replay")
+    assert replay["recheck"]["matched"]
+    assert replay["research_missing_policy"] == policy
+    assert original == {p.name: p.read_bytes() for p in a.folder.iterdir()}
+
+
+def test_issuer_attachment_recheck_is_offline_and_retains_price_verdict(tmp_path):
+    from test_price_audit import issuer_workbook
+
+    a = archive(tmp_path / "original")
+    kis_collect.collect(FakeMarket(empty_rights=True), a)
+    before, _ = kis_audit.audit_archive(a.folder, a.meta)
+    kis_collect.finish(a, before)
+    original = {p.name: p.read_bytes() for p in a.folder.iterdir()}
+    source = tmp_path / "synthetic-issuer.xlsx"
+    source.write_bytes(
+        issuer_workbook(
+            [
+                [
+                    "SYNTHETIC",
+                    t,
+                    "fake",
+                    "12/08/2025",
+                    "12/09/2025",
+                    "12/15/2025",
+                    "1",
+                    "",
+                    "0",
+                    "Q",
+                ]
+                for t in kis_collect.SAMPLE
+            ]
+        )
+    )
+    result, folder = kis.recheck(a.folder, tmp_path / "with-issuer", source)
+    assert not result["recheck"]["matched"]  # New evidence changes issuer_comparisons.
+    assert (folder / "issuer-distributions.xlsx").read_bytes() == source.read_bytes()
+    for ticker in kis_collect.SAMPLE:
+        assert result["symbols"][ticker]["prices"] == before["symbols"][ticker]["prices"]
+        assert result["symbols"][ticker]["status"] == "held"
+        summary = result["event_review"][ticker]["summary"]
+        assert summary["issuer_events"] == 1 and summary["one_to_one_date_matches"] == 0
+        assert (
+            summary["price_pairs_available"] == 1 and summary["capital_gains_unknown_events"] == 1
+        )
+    replay, _ = kis.recheck(folder, tmp_path / "replay")
+    assert replay["recheck"]["matched"] and replay["event_review"] == result["event_review"]
+    assert original == {p.name: p.read_bytes() for p in a.folder.iterdir()}
+    report = (folder / "report.md").read_text()
+    assert "배당·조정 대조 XLC:" in report and "XLK 분할 대조" in report

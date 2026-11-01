@@ -1,5 +1,7 @@
 # MacroLens
 
+2026-11-01 최신 상태: 사용자 Codespaces에서 세 상품 가격·권리를 확보했고, XLC 2023-06-05는 알려진 결측으로 유지한다. KIS 문의·반복 조회는 필수가 아니다. 이 환경에서는 공식 배당 XLSX(각 26건)를 새로 확보했으나 사용자 KIS 원본은 없어 실제 교차 대조는 미실시다. 원자료 판정과 결측 처리 조건을 붙인 연구 사용 가능성을 구분하며 백테스트는 시작하지 않았다.
+
 2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
 
 미국 거시경제 기반 섹터 분석. **M3: 11개 섹터 연구 점수**와 M2의 자료 시점·실행 이력·전주 비교를 제공합니다.
@@ -565,3 +567,61 @@ GET은 명령당 1회, 실패 재시도 없음. 진단 결과는 data/kis_diagno
 새 응답도 같은 모순이면 반복 다운로드하지 말고 KIS에 시가/저가 집계 범위·원천값 정정을 확인한다.
 다른 값이 나오더라도 자동 교체하지 않고 두 수집 시점과 원문을 함께 검토한다.
 모든 경로에서 can_collect=false이며 백테스트·12개 확대를 승인하지 않는다.
+
+## 2026-11-01: 알려진 결측 방침·저장 자료의 배당/분할 대조
+
+현재는 XLC 하루 오류로 KIS 문의나 반복 조회를 계속하지 않는다. XLC 2023-06-05를 알려진 결측으로
+유지하고 필요한 계산/섹터 비교 시점을 향후 제외한다. 원자료 held와 다른 오류는 그대로이며,
+이 방침 자체가 연구 적격성을 승인하지 않는다. [설계 3.1절](docs/m4_validation_design.md)을 따른다.
+위의 과거 재조회/문의 명령은 조사 이력이며 지금 다시 실행할 필요가 없다.
+
+```bash
+cd /workspaces/MacroLens
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv sync --locked --extra price-audit
+```
+
+공식 배당 파일이 이미 있으면 다음 목록에서 사용할 파일을 확인하고 재다운로드를 생략한다.
+
+```bash
+find data/price_audit -name issuer-distributions.xlsx -type f
+```
+
+폴더/파일이 없으면 한 번만 다음 명령으로 공식 XLSX를 받는다. 이것은 KIS 가격 재수집이 아니다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.price_audit issuer
+```
+
+성공 시 `held / actual_issuer_distributions_not_prices`, 보고서 경로와 가격 미검수 상태를 기록한다.
+보고서에서 XLC/XLK/SPY 배당 각 26건을 기대한다(공식 파일이 갱신되면 달라질 수 있음).
+종료 코드 2는 가격 승인 보류이며 이 출력만으로 다운로드 실패를 뜻하지 않는다.
+`download_failed`/형식 오류이면 다운로드 성공으로 처리하지 말고 failure.json/오류를 확인한다.
+수동 파일이 필요하면 공식 URL은 다음과 같다. 개인 Git 제외 경로 data/price_inbox에 저장한다.
+https://www.ssga.com/library-content/products/fund-data/etfs/us/spdr-etf-historical-distributions.xlsx
+
+아래 변수는 **자신의 파일 경로로 한 번 교체**한다. issuer 명령이 출력한 report.md와 같은 폴더의
+issuer-distributions.xlsx다. 이 문서에 적힌 개발 환경의 20261101T054536Z… 경로를 Codespaces 경로로 쓰지 않는다.
+
+```bash
+ISSUER_FILE='data/price_audit/실제_issuer_ID/issuer-distributions.xlsx'
+uv run --locked --extra price-audit python -m macrolens.kis recheck \
+  data/kis/20261031T112008Z-57b1c77748be --issuer-file "$ISSUER_FILE"
+```
+
+KIS 입력은 **폴더**, issuer 입력은 **XLSX 파일**이다. KIS 폴더 뒤에 /report.md를 붙이지 않는다.
+이 재검수는 API/키 없이 새 결과 폴더를 만들고 기존 원본을 보존한다. 근거를 처음 추가하므로
+recheck: different일 수 있다. held/can_collect:false도 예상 가능하며 가격 수집 실패라는 뜻은 아니다.
+새로 출력된 report.md를 열어 다음 부분만 공유하면 된다.
+
+- 상품 표와 연구 결측 방침
+- `배당·조정 대조 XLC/XLK/SPY`의 요약 줄과 조정계수 변화 배율 범위
+- `XLK 분할 대조` 줄, 추가 오류가 있으면 그 사유
+
+날짜/금액 일치 건수와 XLK 비율은 실제 실행 전 값을 보장하지 않는다. `원자료 held`를
+`conditional`로 강제 변경하지 않는다. USD 금액 숫자가 같아도 주당 기준은 미확인이다.
+조정계수 변화가 보여도 그 원인이 배당이라고 단정하거나 총수익 검증 통과로 표시하지 않는다.
+자세한 사건 날짜·금액 후보·통화·기준·가격 출처는 audit.json의 event_review에 있다.
+정확히 같은 새 저장 폴더를 issuer-file 없이 다시 recheck하면 상품 결과 matched를 기대한다.
+원자료/인증 파일을 채팅이나 공개 Git에 올리지 않는다. 12개 확대·백테스트는 아직 하지 않는다.

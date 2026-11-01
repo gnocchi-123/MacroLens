@@ -98,6 +98,7 @@ class Archive:
                     "kis_client.py",
                     "kis_collect.py",
                     "kis_audit.py",
+                    "kis_events.py",
                     "kis.py",
                     "price_quality.py",
                     "price_issuer.py",
@@ -394,6 +395,52 @@ def finish(archive, result):
                 f"동일한 가격 경계 행 {len(result['automatic_corrections'])}건을 "
                 "정규화 결과에서 한 번씩 집계했습니다. 원본은 변경하지 않았으며 "
                 "양쪽 원본 파일·날짜는 audit.json의 automatic_corrections에 기록했습니다.",
+            ]
+        )
+    if result.get("research_missing_policy"):
+        lines.extend(
+            [
+                "",
+                "연구 결측 방침: XLC 2023-06-05는 알려진 결측으로 유지합니다. "
+                "그 가격이 필요한 계산·해당 섹터 비교 시점을 향후 제외합니다. "
+                "이번에는 제외 엔진을 실행하지 않습니다. 원자료 held·다른 오류·총수익 적격성을 "
+                "변경하지 않습니다. KIS 문의·반복 조회는 필수가 아닙니다.",
+            ]
+        )
+    for ticker, review in result.get("event_review", {}).items():
+        lines.extend(["", f"배당·조정 대조 {ticker}: {review['status']}"])
+        if "summary" in review:
+            s = review["summary"]
+            matched_amounts = s["unique_confirmed_usd_numeric_matches_basis_unverified"]
+            lines.append(
+                f"- 운용사 사건 {s['issuer_events']}, "
+                f"날짜 1:1 일치 {s['one_to_one_date_matches']}, "
+                f"USD 금액 숫자 일치(주당 기준 미확인) {matched_amounts}, "
+                f"사건 전후 가격 쌍 {s['price_pairs_available']}, "
+                f"자본이득 빈 값 포함 사건 {s['capital_gains_unknown_events']}"
+            )
+            if review["issuer_quality_issues"]:
+                lines.append("- 운용사 파일 검사: " + "; ".join(review["issuer_quality_issues"]))
+            pairs = [e["price_pair"] for e in review["events"] if "factor_step" in e["price_pair"]]
+            if pairs:
+                steps = [p["factor_step"] for p in pairs]
+                lines.append(
+                    f"- 배당락일 조정계수 변화 배율 범위: {min(steps):.8f}~{max(steps):.8f}. "
+                    "관측 진단이며 배당 조정 정의/총수익 검증이 아닙니다."
+                )
+        lines.append(
+            "- 날짜·금액 후보·주당 기준·사건별 가격은 audit.json의 event_review 참조. "
+            "배당을 가격에 더하지 않았습니다."
+        )
+    split = result["symbols"].get("XLK", {}).get("xlk_split", {})
+    if split.get("price_diagnostic"):
+        lines.extend(
+            [
+                "",
+                "XLK 분할 대조(2025-12-05, 공식 2:1): "
+                + json.dumps(split["price_diagnostic"], ensure_ascii=False),
+                "분할비는 MODP=0 진단에만 적용했고 MODP=1에 다시 적용하지 않았습니다. "
+                "배당 포함·권리 완전성은 별도 미확인입니다.",
             ]
         )
     lines += [

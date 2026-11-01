@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .kis_client import KISError, public_payload
 from .kis_collect import PRICE_PAGINATION, SAMPLE, day, price_boundary_overlap, rows
+from .kis_events import KNOWN_MISSING_POLICY, review_events
 from .price_issuer import parse_distributions
 from .price_quality import trading_sessions
 
@@ -145,6 +146,8 @@ def audit_archive(folder, meta):
         "total_return_eligible": False,
         "automatic_corrections": [],
         "price_row_errors": [],
+        "research_missing_policy": dict(KNOWN_MISSING_POLICY),
+        "event_review": {},
     }
     probe_prices_ok = True
     normalized = {}
@@ -365,6 +368,9 @@ def audit_archive(folder, meta):
                 limits.append("운용사 배당 날짜와 KIS 권리 1:1 대조 미완료")
         else:
             limits.append("운용사 공식 XLSX 미첨부; --issuer-file로 오프라인 대조 가능")
+        result["event_review"][ticker] = review_events(
+            prices, rights, ice, issuer[ticker] if issuer else None
+        )
         split = {"status": "not_in_range_or_not_xlk"}
         if ticker == "XLK" and meta["start"] <= "2025-12-05" <= meta["end_inclusive"]:
             split = {
