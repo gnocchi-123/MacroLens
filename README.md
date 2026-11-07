@@ -646,3 +646,121 @@ uv run --locked --extra price-audit python -m macrolens.kis recheck \
 0.00001 USD는 표시 정밀도 진단 단위이며, 품질 승인 허용 오차가 아니다. 작은 차이도 원문과
 delta를 유지하고 numeric_difference를 지우지 않는다. 주당 기준과 자본이득 빈 값도 미확인 상태다.
 이전 상품 판정과 같으면 recheck: matched일 수 있으며 기존 held/conditional을 강제로 바꾸지 않는다.
+
+### 세 상품의 오프라인 배당·현금 원장 (M4, 2026-11-07)
+
+`kis ledger`는 저장된 XLC·XLK·SPY 자료로 ETF 자체의 달러 기준 세전 원장을 만든다.
+API 키·인증·재다운로드는 필요 없다. 전략 백테스트 명령이 아니다.
+시작일 종가로 1주 매수, 배당락일에 미수 배당 확정, 지급일에 현금 전환,
+**지급일보다 뒤 첫 미국 거래일 종가**에 소수점 수량으로 재투자한다.
+분할은 수량만 조정하며 이미 확정한 미수 배당은 늘리지 않는다.
+규칙과 한계는 [설계 8.1절](docs/m4_validation_design.md#81-세-상품의-총수익-원장-규칙-2026-11-07-사용자-선택구현)에 있다.
+
+Codespaces에서 먼저 현재 브랜치와 파일을 확인한다. 아래 경로는 사용자가 알려준 기존 첨부 재검수
+기록이다. 폴더가 없다면 다음 조회 결과에서 **전체 수집/재검수 폴더**를 골라 대체한다.
+`report.md` 파일 경로가 아니라 `COMPLETE`가 있는 폴더를 입력한다.
+
+```bash
+cd /workspaces/MacroLens
+git branch --show-current
+git status --short
+git pull --ff-only origin feat/m4-kis-data
+uv sync --locked --extra price-audit
+
+# 개인 저장 자료의 경로만 조회한다. 원문·비밀값은 출력하지 않는다.
+rg --files --hidden --no-ignore data/kis | rg '/(manifest.json|issuer-distributions.xlsx)$'
+
+# 양끝 포함. 저장 첨부 공식 XLSX를 이용한 오프라인 계산/보류 사유 보고.
+uv run --locked --extra price-audit python -m macrolens.kis ledger \
+  data/kis/20261101T055700Z-9851ad4fe637 \
+  --start 2020-06-01 --end 2026-09-30
+```
+
+원수집 폴더에 공식 파일이 첨부되지 않았다면 이미 보관한 XLSX를 명시한다. 예:
+
+```bash
+rg --files --hidden --no-ignore data/price_audit | rg '/issuer-distributions.xlsx$'
+# 위 조회에서 실제 파일을 골라 --issuer-file 뒤 경로를 지정한다.
+uv run --locked --extra price-audit python -m macrolens.kis ledger \
+  data/kis/20261031T112008Z-57b1c77748be \
+  --issuer-file data/price_audit/20261101T054536Z-5a34adf9bc3c/issuer-distributions.xlsx \
+  --start 2020-06-01 --end 2026-09-30
+```
+
+두 번째 예시의 XLSX 경로는 개발 환경에서 확인한 저장본이다. 사용자 Codespaces에도 그 경로가
+있다는 뜻은 아니므로 조회 결과로 바꾼다. 새로운 다운로드 명령을 실행할 필요는 없다.
+
+입력 근거가 미확인인 현재 자료에서는 다음처럼 나오는 것이 정상적인 **보류 보고 성공**이다.
+숫자는 파일·구간에 따라 달라진다. `원장 0행`은 시작일부터 가격 기준 등이 미확인이라는 뜻이다.
+
+```text
+offline ledger: held / real
+XLC: held / 원장 0행 / 보류 사유 ...건
+XLK: held / 원장 0행 / 보류 사유 ...건
+SPY: held / 원장 0행 / 보류 사유 ...건
+원장 보고서: data/kis_ledger/<새 ID>/report.md
+```
+
+- 종료 코드 **2**: 보고서를 보존했지만 계산 구간 보류. `report.md`에서 상품·날짜·문제 입력과
+  해소 근거를 읽고, `result.json`에서 상세 원장·분할·KIS 교차검수를 확인한다.
+  XLC 알려진 결측과 빈 자본이득·주당 기준·기간 전체 MODP=0 기준을 자동 승인하지 않는다.
+- 종료 코드 **0**: `calculated_under_reviewed_inputs`. 해당 입력 근거 범위의 계산 완료이며
+  검증된 총수익 인증이 아니다. 상품별 `*-ledger.csv`, `result.json`을 확인한다.
+- 종료 코드 **1**: 경로·무결성·날짜·입력 형식 등의 작업 오류. `archive_incomplete`면
+  입력이 보고서 파일이 아닌 폴더인지, `COMPLETE`가 있는지 확인한다. 체크섬 오류를 수정하려고
+  원본이나 체크섬을 고치지 않는다. 필요한 경우 보존된 정상 원본 경로를 선택한다.
+
+`--output data/kis_ledger`가 기본이다. 매번 새 폴더를 만들어 기존 원본·보고서를 유지한다.
+CSV는 날짜별 보유 수량, 미수 배당, 현금, 재투자 수량, 평가액 등을 보여준다.
+휴장일에는 마지막 정규장 가격 날짜를 표시한다. 거래일 결측은 채우지 않는다.
+보류가 있으면 첫 문제 직전의 진단 원장만 제공하며 기간 전체 총수익률은 `null`이다.
+`result.json`의 `exact`는 정확한 분수, CSV/`display`는 표시용 소수점 12자리다.
+
+#### 자료 근거서의 역할
+
+처음 실행할 때 생성되는 `review-template.json`의 모든 주장 값은 `unknown`이다.
+**실제 공식 근거가 없는데 통과시키려고 변경하지 않는다.** 사용자가 승인한 계산 규칙과 별개로,
+미확인 자료를 확인 사실로 바꾸지 않기 위한 입력이다. 참고 파일의 해시가 맞다는 것만 검사할 수
+있으며 문서 내용의 진위·해석은 자동 인증하지 못한다. 현재 근거서를 작성해야만 보고서를 볼 수
+있는 것은 아니다. 기본 명령만으로 모든 보류 사유를 먼저 확인할 수 있다.
+
+근거를 검토한 뒤에만 양식을 개인 `data/` 경로에 복사해 기록할 수 있다.
+`schema_version=1`, `input_sha256`은 생성된 값을 유지한다. `symbols.XLC/XLK/SPY`의 필드는:
+
+| 필드 | 근거가 있을 때 허용하는 value | 필요한 내용 |
+| --- | --- | --- |
+| price_basis | as_traded_modp0 | 적용 구간 전체에서 당시 거래가격이라는 근거 |
+| split_coverage | complete | 기본 XLK 공식 분할과 additional_splits 목록의 기간 완전성 |
+| distribution_coverage | complete | 해당 상품·기간의 공식 분배금 목록 완전성 |
+| event_share_basis.배당락일 | per_ex_date_share | 그 사건의 배당·자본이득이 배당락일 당시 1주 기준이라는 근거 |
+
+각 주장에는 `start`, `end`, `references`가 있다. 참조 1개는
+`{"file": "공식근거.txt", "sha256": "실제 파일의 SHA256", "reason": "어느 문구가 무엇을 뒷받침하는지"}`
+형식이며 파일 경로는 근거서 위치 기준이다. 해시는 `sha256sum data/경로/공식근거.txt`로 확인한다.
+인증 파일·키·토큰을 참조로 넣지 않는다. `additional_splits`는 기본 XLK 사건을 중복 기입하지 않고,
+추가 공식 사건이 있을 때만 `date`, `new_per_old`(문자열 비율), `value=official_split`,
+적용 구간 및 같은 참조 구조로 기록한다. 미확인 분할을 자동 추정하지 않는다.
+
+근거서에는 가격·배당·빈 자본이득을 대체하는 기능이 없다. 별도 공식 파일로 명시 금액을
+확보하지 못한 빈 자본이득은 여전히 보류한다. 입력 해시가 다르면 기존 근거서를 적용하지 않는다.
+근거서가 확인된 경우의 명령 형식은 다음과 같다(파일명을 실제 검토본으로 대체).
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis ledger \
+  data/kis/20261101T055700Z-9851ad4fe637 \
+  --start 2020-06-01 --end 2026-09-30 \
+  --review-file data/kis_ledger/reviewed-inputs.json
+```
+
+동일 원본·공식 파일·근거·코드·달력 버전으로 재실행하면 `result.json`과 원장 CSV가 일치한다.
+결과 폴더에 보존된 `review.json`과 근거 사본으로도 재실행할 수 있다. 외부 XLSX를 사용했다면
+재실행에도 같은 내용의 `--issuer-file`을 지정한다. 폴더 ID와 실행 시각은 새로 생성된다.
+원자료 held/conditional 및 total_return_eligible=false, strict_point_in_time=false는 유지한다.
+
+개발 검사는 실제 자료 검수와 별개로 실행한다:
+
+```bash
+uv run --locked --extra price-audit pytest -q
+uv run --locked --extra price-audit ruff check .
+uv run --locked --extra price-audit ruff format --check .
+```

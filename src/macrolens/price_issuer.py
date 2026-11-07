@@ -27,7 +27,7 @@ HEADERS = (
 NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
 
-def parse_distributions(blob, tickers, start, end):
+def parse_distributions(blob, tickers, start, end, *, exact_amounts=False):
     """Only accept the reviewed workbook format. Blank capital gains stay unknown."""
     try:
         with ZipFile(io.BytesIO(blob)) as archive:
@@ -85,6 +85,15 @@ def parse_distributions(blob, tickers, start, end):
                         "cusip": row[2],
                     }
                 )
+                if exact_amounts:
+                    # Preserve source decimal text for exact ledger arithmetic, including blanks.
+                    events[-1]["source_amounts"] = dict(
+                        zip(
+                            ("dividend", "short_term_gain", "long_term_gain"),
+                            (v if v else None for v in row[6:9]),
+                            strict=True,
+                        )
+                    )
             dates = [e["ex_date"] for e in events]
             if not dates:
                 issues.append("요청 범위 배당 자료 없음; 무배당으로 해석하지 않음")

@@ -86,6 +86,15 @@ def main(argv=None):
     check.add_argument("saved", type=Path)
     check.add_argument("--output", type=Path, default=Path("data/kis"))
     check.add_argument("--issuer-file", type=Path)
+    ledger = sub.add_parser("ledger", help="저장 원본의 오프라인 ETF 수량·미수배당·현금 원장")
+    ledger.add_argument("saved", type=Path, help="COMPLETE가 있는 수집/재검수 폴더")
+    ledger.add_argument("--start", default=DEFAULT_START)
+    ledger.add_argument("--end", default=DEFAULT_END, help="양끝 포함 YYYY-MM-DD")
+    ledger.add_argument("--issuer-file", type=Path, help="생략하면 저장 원본에 첨부된 XLSX")
+    ledger.add_argument(
+        "--review-file", type=Path, help="입력 해시에 결합한 자료 근거서; 미지정=unknown"
+    )
+    ledger.add_argument("--output", type=Path, default=Path("data/kis_ledger"))
     diagnostic = sub.add_parser("diagnose", help="선택 API 한 번만 진단; 재시도·전체 probe 없음")
     diagnostic.add_argument("--env", choices=("real", "demo"), required=True)
     diagnostic.add_argument("--symbol", choices=SAMPLE, default="SPY")
@@ -100,6 +109,20 @@ def main(argv=None):
     diagnostic.add_argument("--modp", choices=("0", "1"), help="dailyprice 수정주가 옵션; 기본 0")
     args = parser.parse_args(argv)
     try:
+        if args.command == "ledger":
+            from .kis_ledger import run
+
+            result, folder = run(
+                args.saved, args.output, args.start, args.end, args.issuer_file, args.review_file
+            )
+            print("offline ledger: " + result["status"] + " / " + result["evidence_kind"])
+            for ticker, item in result["symbols"].items():
+                print(
+                    f"{ticker}: {item['status']} / 원장 {len(item['rows'])}행 / "
+                    f"보류 사유 {len(item['blockers'])}건"
+                )
+            print("원장 보고서: " + str(folder / "report.md"))
+            return 2 if result["status"] == "held" else 0
         if args.command == "diagnose":
             from .kis_diagnostic import diagnose
 
