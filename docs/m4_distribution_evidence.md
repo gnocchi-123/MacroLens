@@ -242,6 +242,19 @@ XLK 2025년 사건4, 해소 빈 셀6, 남은 단기0/장기0, 주당 기준 미�
 아니다. 분할 전/후나 배당 없는 짧은 기간도 공통 가격·목록 조건을 우회하지 않는다.
 불명확한 사건을 빼서 전체 연간 수익률로 이어 붙이지 않으며, 원래 평가 구간의 변경도 아니다.
 
+## 후속 선택: 문의 없이 가정에 따른 추정 (2026-11-08)
+
+위 공식 확인 결과는 그대로다. 이후 사용자가 대략적인 추정치를 허용했으므로, 공식 근거 추가 없이도
+XLK 2025년을 계산할 **별도 추정 경로**를 만들었다. 당초 표의 주당 기준4건은 여전히unknown이다.
+공식 문의는 추정 실행의 필수 단계가 아니다.
+
+`kis estimate-xlk-2025`는 A(표 금액 그대로)와 B(분할 전3건의 계산용 배당액2배)를 함께 계산한다.
+두 경우 모두 가격 기준과 사건 목록의 충분성을 가정한다. 새 공식 사실이나 승인으로 표시하지 않는다.
+동일한 원장 산식·원본 가격을 사용하며 두 결과 차이만으로 어느 가정이 참인지 결정하지 않는다.
+실제 결측/오류는 그대로 차단하고, 별도 추정 입력과 미해소된 엄밀 판정을 모두 보존한다.
+사용법은 README, 정확한 가정/범위는 설계8.1의 추정 모드를 따른다. 실제 KIS 원본이 없는 이 환경에서
+실제 추정 수익률은 미실시다. 합성 숫자를 실제 결과로 제시하지 않는다.
+
 [kis-option]: https://github.com/koreainvestment/open-trading-api/blob/3a9be59a3ed8745720dc3aa9d584bdf3b7830362/examples_llm/overseas_stock/dailyprice/chk_dailyprice.py#L24-L57
 [history]: https://www.ssga.com/library-content/products/fund-data/etfs/us/spdr-etf-historical-distributions.xlsx
 [definitions]: https://www.ssga.com/us/en/intermediary/resources/documents/etf-dividend-distributions

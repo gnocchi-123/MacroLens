@@ -100,6 +100,12 @@ def main(argv=None):
         type=Path,
         help="사건별 공식 분배 근거 JSON; 기본은 동봉한 검토 근거 목록",
     )
+    estimate = sub.add_parser(
+        "estimate-xlk-2025", help="문의 없는 XLK 2025 A/B 추정; 기존 원본 판정 유지·오프라인"
+    )
+    estimate.add_argument("saved", type=Path, help="COMPLETE가 있는 기존 수집/재검수 폴더")
+    estimate.add_argument("--issuer-file", type=Path, help="생략하면 저장 첨부 XLSX 사용")
+    estimate.add_argument("--output", type=Path, default=Path("data/kis_ledger_estimates"))
     evidence = sub.add_parser("distribution-evidence", help="오프라인 공식 분배 근거/빈칸 목록")
     evidence.add_argument("--issuer-file", type=Path, required=True)
     evidence.add_argument("--start", default=DEFAULT_START)
@@ -120,6 +126,16 @@ def main(argv=None):
     diagnostic.add_argument("--modp", choices=("0", "1"), help="dailyprice 수정주가 옵션; 기본 0")
     args = parser.parse_args(argv)
     try:
+        if args.command == "estimate-xlk-2025":
+            from .kis_estimate import run
+
+            result, folder = run(args.saved, args.output, args.issuer_file)
+            print("XLK 2025 추정: " + result["status"] + " / " + result["evidence_kind"])
+            for key, item in result["scenarios"].items():
+                print(f"{key}: {item['status']} / 원장 {len(item['rows'])}행")
+            print("검증된 총수익률이 아닙니다. 기존 판정·원본은 유지합니다.")
+            print("추정 보고서: " + str(folder / "report.md"))
+            return 2 if result["status"] == "held" else 0
         if args.command == "distribution-evidence":
             from .distribution_evidence import inventory
 

@@ -809,3 +809,66 @@ uv run --locked --extra price-audit python -m macrolens.kis distribution-evidenc
 실제 KIS 원본이 없는 개발 환경에서는 가격 원장을 실행하지 않았다. 전체2025 및 부분 구간의
 계산 가능성도 미확정이므로 지금 사용자에게 가격 재수집이나 같은 원장 재실행을 요구하지 않는다.
 [사건별 차단 조건과 필요한 공식 사실](docs/m4_distribution_evidence.md#xlk-2025-우선-자료-검증-결과-2026-11-08)을 확인한다.
+
+### 문의 없이 XLK 2025 추정하기 (2026-11-08 사용자 선택)
+
+사용자가 대략적인 추정치를 허용해 **별도 명령** `estimate-xlk-2025`를 추가했다.
+기존 `ledger`의 보류 판정과 원본은 그대로다. 새 명령은 저장 자료만 읽고 인증·다운로드하지 않는다.
+대상은 XLK, 2025-01-02 종가 1주 매수부터 2025-12-31까지다. 원래 연구 평가 기간은 바뀌지 않는다.
+
+| 가정 | 계산용 배당액 |
+| --- | --- |
+| A (`reported_amounts`) | 공식 이력표의 4건을 당시 1주 기준으로 가정하여 그대로 사용 |
+| B (`pre_split_dividends_x2`) | 분할 전 3건이 분할 후 기준 표시라고 가정하여 당시 주당액을 2배로 환산. 12월은 그대로 |
+
+두 가정 모두 MODP=0을 당시 정규장 종가로 사용하며, 2025년 분배는 알려진4건·분할은 공식1건으로
+충분하다고 **가정**한다. 주당 기준·목록 완전성·가격 기준이 공식 확인됐다는 뜻이 아니다.
+기존 사건별 공식 근거로 확인한 단기·장기0을 사용하고 미확인 빈칸을 추가로0으로 만들지 않는다.
+두 결과 차이(B−A)는 배당 기준에 대한 민감도이며 실제 오차 상한이나 통계적 신뢰구간이 아니다.
+
+Codespaces에서 기존 공식 파일 첨부 재검수 폴더로 실행:
+
+```bash
+cd /workspaces/MacroLens
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv run --locked --extra price-audit python -m macrolens.kis estimate-xlk-2025 \
+  data/kis/20261101T055700Z-9851ad4fe637
+```
+
+위 폴더가 없으면 다음 조회로 **이미 저장한** 수집/재검수 폴더를 찾아 경로만 바꾼다.
+`report.md` 파일 경로 대신 그 파일이 들어 있는 폴더를 지정한다.
+
+```bash
+rg --files --no-ignore data/kis -g manifest.json -g issuer-distributions.xlsx
+```
+
+공식 파일이 첨부되지 않은 기존 수집 폴더도 사용할 수 있다. 이 경우 위 명령 끝에
+`--issuer-file <이미 저장된 공식 XLSX 경로>`를 추가한다. 가격이나 공식 파일을 다시 받지 않는다.
+`--review-file` 작성이나 unknown을 수동으로 승인하는 작업은 필요 없다.
+
+자료의 구조·가격 검사가 통과하면 다음처럼 표시된다. 숫자 수익률은 보고서에서 확인한다.
+
+```text
+XLK 2025 추정: estimated_not_validated / real
+reported_amounts: estimated_not_validated / 원장 364행
+pre_split_dividends_x2: estimated_not_validated / 원장 364행
+검증된 총수익률이 아닙니다. 기존 판정·원본은 유지합니다.
+추정 보고서: data/kis_ledger_estimates/<새 ID>/report.md
+```
+
+- `report.md`: A/B의 추정 총수익률(%), 차이(%p), 적용 가정·남은 오류. 일별 원장은 두 CSV.
+- `result.json`: 반올림 전 분수와 표시값, 가정 버전, 입력/코드 해시, 시나리오별 판정.
+  `estimated_total_return`은 비율(0.01은1%)이며 보고서는 퍼센트로 표시한다.
+- `strict-result.json`, `strict-inputs.json`: 기존 판정과 변경 전 입력. 원본 빈칸도 보존한다.
+- `scenario-events.json`: 가정에 따라 환산한 별도 계산용 사건. 공식 확정값으로 재사용하지 않는다.
+- 원래 기준의 별도 원장 출력은 같은 저장 경로의 `strict/` 아래에 생성한다. 위치는
+  `strict-output-location.json`에 기록한다. 기존 기록은 어느 것도 덮어쓰지 않는다.
+- 원장364행은 휴장일 평가를 포함한 달력 날짜다. 정규 거래일은250일이며 거래일 결측은 채우지 않는다.
+- 종료 코드0은 **추정 계산 완료**, 2/`held`는 실제 결측·오류·사건 불일치 등으로 추정도 보류,
+  1은 파일/해시 등의 실행 오류다. `held` 보고서의 날짜·필드·원인을 확인한다.
+
+이 명령에서는 배당락 미수금·지급일 현금·지급일 뒤 첫 거래일 재투자·분할 수량1회 규칙을 유지한다.
+MODP=1에 배당을 더하지 않는다. 식별/가격 오류, 결측, 사건 충돌, 이미 조정된 가격의 이중 분할
+징후는 추정에서도 차단한다. `strict_point_in_time=false`, `total_return_eligible=false`를 유지한다.
+개발 환경에는 실제 KIS 원본이 없어 실제 추정은 미실시다. 합성 테스트를 실제 XLK 성과로 표시하지 않는다.
