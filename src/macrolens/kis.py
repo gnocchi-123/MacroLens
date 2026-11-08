@@ -95,6 +95,17 @@ def main(argv=None):
         "--review-file", type=Path, help="입력 해시에 결합한 자료 근거서; 미지정=unknown"
     )
     ledger.add_argument("--output", type=Path, default=Path("data/kis_ledger"))
+    ledger.add_argument(
+        "--distribution-evidence",
+        type=Path,
+        help="사건별 공식 분배 근거 JSON; 기본은 동봉한 검토 근거 목록",
+    )
+    evidence = sub.add_parser("distribution-evidence", help="오프라인 공식 분배 근거/빈칸 목록")
+    evidence.add_argument("--issuer-file", type=Path, required=True)
+    evidence.add_argument("--start", default=DEFAULT_START)
+    evidence.add_argument("--end", default=DEFAULT_END)
+    evidence.add_argument("--evidence-file", type=Path)
+    evidence.add_argument("--output", type=Path, default=Path("data/kis_distribution_evidence"))
     diagnostic = sub.add_parser("diagnose", help="선택 API 한 번만 진단; 재시도·전체 probe 없음")
     diagnostic.add_argument("--env", choices=("real", "demo"), required=True)
     diagnostic.add_argument("--symbol", choices=SAMPLE, default="SPY")
@@ -109,11 +120,28 @@ def main(argv=None):
     diagnostic.add_argument("--modp", choices=("0", "1"), help="dailyprice 수정주가 옵션; 기본 0")
     args = parser.parse_args(argv)
     try:
+        if args.command == "distribution-evidence":
+            from .distribution_evidence import inventory
+
+            result, folder = inventory(
+                args.issuer_file, args.output, args.start, args.end, args.evidence_file
+            )
+            for ticker, item in result["symbols"].items():
+                n = sum(y["resolved_blank_fields"] for y in item["by_year"].values())
+                print(f"{ticker}: 공식 사건 근거로 해석한 빈 셀 {n}개 / 실제 가격 원장 미실행")
+            print("분배 근거 보고서: " + str(folder / "report.md"))
+            return 0
         if args.command == "ledger":
             from .kis_ledger import run
 
             result, folder = run(
-                args.saved, args.output, args.start, args.end, args.issuer_file, args.review_file
+                args.saved,
+                args.output,
+                args.start,
+                args.end,
+                args.issuer_file,
+                args.review_file,
+                args.distribution_evidence,
             )
             print("offline ledger: " + result["status"] + " / " + result["evidence_kind"])
             for ticker, item in result["symbols"].items():

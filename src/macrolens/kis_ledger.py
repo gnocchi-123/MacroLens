@@ -5,6 +5,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+from .distribution_evidence import interpret, load_catalog, summary
 from .kis_audit import audit_archive
 from .kis_collect import SAMPLE, verify_archive
 from .kis_events import KNOWN_MISSING_POLICY, review_events
@@ -162,7 +163,7 @@ def identity_ok(meta, result, ticker):
     )
 
 
-def run(saved, output, start, end, issuer_file=None, review_file=None):
+def run(saved, output, start, end, issuer_file=None, review_file=None, distribution_evidence=None):
     saved = Path(saved)
     if date.fromisoformat(start) > date.fromisoformat(end):
         raise AuditError("시작일이 종료일보다 늦음")
@@ -191,6 +192,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
         "issuer": sha(issuer_blob) if issuer_blob is not None else None,
     }
     reviewed, evidence_files = load_review(review_file, bindings)
+    distribution_catalog, distribution_blob = load_catalog(distribution_evidence)
     last_pay = max([end] + [e["payable_date"] for group in events.values() for e in group])
     sessions, calendar = trading_sessions(
         start, (date.fromisoformat(last_pay) + timedelta(days=14)).isoformat()
@@ -225,6 +227,19 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
                 if confirmed(claim, "per_ex_date_share", event["ex_date"], event["ex_date"])
                 else "unknown"
             )
+        source_events = events[ticker]
+        events[ticker], interpretations = interpret(ticker, source_events, distribution_catalog)
+        for event_review in interpretations:
+            for field, resolution in event_review["fields"].items():
+                if resolution["status"] in ("conflict", "unsupported_nonzero_tax_component"):
+                    if start < event_review["ex_date"] <= end:
+                        hold(
+                            event_review["ex_date"],
+                            field,
+                            "distribution_evidence_conflict",
+                            "공식 사건 자료의 충돌/비영 세무 분류 확인 필요; "
+                            "총분배액에 재가산 금지",
+                        )
         prices, price_sources, duplicates = exact_prices(saved, normalized[ticker], "0")
         adjusted, _, _ = exact_prices(saved, normalized[ticker], "1")
         for issue in audit["symbols"][ticker]["issues"]:
@@ -299,12 +314,15 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
                 normalized[ticker]["ice_rights"],
                 official.get(ticker),
             ),
+            distribution_interpretations=interpretations,
+            distribution_evidence_by_year=summary(interpretations),
         )
         symbols[ticker] = item
         prepared[ticker] = {
             "prices_modp0": prices,
             "price_source_files": price_sources,
             "events": events[ticker],
+            "source_events": source_events,
             "splits": splits,
         }
     result = {
@@ -322,6 +340,12 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
         "symbols": symbols,
         "review_semantics": "hash-checked human evidence; content not automatically certified",
         "review_sha256": sha(evidence_files["review.json"]) if evidence_files else None,
+        "distribution_evidence": {
+            "catalog_id": distribution_catalog["id"],
+            "sha256": sha(distribution_blob),
+            "documents": distribution_catalog["documents"],
+            "source_verification": "reviewed catalogue; no network or fresh document verification",
+        },
         "status": "held"
         if any(s["status"] == "held" for s in symbols.values())
         else "calculated_under_reviewed_inputs",
@@ -334,6 +358,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
                 "kis_audit.py",
                 "kis_collect.py",
                 "kis_events.py",
+                "distribution_evidence.py",
                 "price_quality.py",
             )
         },
@@ -341,6 +366,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None):
     folder = new_folder(output, "offline_etf_ledger")
     dump(folder / "result.json", result)
     dump(folder / "inputs.json", prepared)
+    (folder / "distribution-evidence.json").write_bytes(distribution_blob)
     dump(folder / "review-template.json", review_template(bindings, events, start, end))
     dump(folder / "source-checksums.json", json.loads((saved / "checksums.json").read_text()))
     if issuer_blob is not None:
@@ -400,6 +426,14 @@ def render(result):
             f"| {t} | {s['source_price_status']} | {s['status']} | {len(s['rows'])} | {value} |"
         )
     for t, s in result["symbols"].items():
+        resolved = sum(
+            y["resolved_blank_fields"] for y in s["distribution_evidence_by_year"].values()
+        )
+        lines += [
+            "",
+            f"{t}: 공식 사건별 명시 0으로 해석한 빈 자본이득 셀 {resolved}개.",
+            "원본 빈칸은 보존. 주당 기준·다른 연도·전체 적격성 승인은 별도입니다.",
+        ]
         lines += ["", f"{t} 보류 사유 (입력·해소 근거):"]
         lines.extend(
             f"- {b['date']} / {b['input']} / {b['code']}: {b['resolution']}" for b in s["blockers"]

@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "id": "ssga-event-evidence-2026-11-08-v1",
+  "documents": {
+    "ssga-ici-primary-2025": {
+      "title": "SPDR ETF 2025 Tax Summary - Primary Layout",
+      "url": "https://www.ssga.com/library-content/products/fund-docs/etfs/us/tax-documents/SPDR_ICI_Tax_Summary_Primary.xlsx",
+      "sha256": "16e471468cd1a66729837234c280799264232318bdb4b0928d6f7844b45bc3b0",
+      "checked_at": "2026-11-08T05:21:27.591933+00:00",
+      "tax_year": 2025,
+      "report_date": "2026-01-20",
+      "start": "2025-01-01",
+      "end": "2025-12-31",
+      "kind": "final_event_tax_summary",
+      "sheet": "2025 ICI Primary",
+      "header_rows": [
+        11,
+        12,
+        13
+      ],
+      "fields": {
+        "short_term_gain": {
+          "column": "O",
+          "label": "Short-term Capital Gain",
+          "role": "tax_component_in_total"
+        },
+        "long_term_gain": {
+          "column": "V",
+          "label": "Total Capital Gain Distr.; Form 1099 Box 2a",
+          "role": "tax_component_in_total"
+        }
+      },
+      "limitations": [
+        "Only explicit per-event O/V zeros are interpreted.",
+        "J is Total Distribution Per Share; classifications must not be added to J.",
+        "No blanket definition that historical XLSX blanks mean zero.",
+        "Does not establish contemporaneous share basis or complete split history."
+      ]
+    }
+  },
+  "claims": [
+    {
+      "id": "XLK-2025-03-24-capital-components",
+      "ticker": "XLK",
+      "cusip": "81369Y803",
+      "record_date": "2025-03-24",
+      "ex_date": "2025-03-24",
+      "payable_date": "2025-03-26",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 917,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O917",
+        "long_term_gain": "V917"
+      }
+    },
+    {
+      "id": "XLK-2025-06-23-capital-components",
+      "ticker": "XLK",
+      "cusip": "81369Y803",
+      "record_date": "2025-06-23",
+      "ex_date": "2025-06-23",
+      "payable_date": "2025-06-25",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 918,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O918",
+        "long_term_gain": "V918"
+      }
+    },
+    {
+      "id": "XLK-2025-09-22-capital-components",
+      "ticker": "XLK",
+      "cusip": "81369Y803",
+      "record_date": "2025-09-22",
+      "ex_date": "2025-09-22",
+      "payable_date": "2025-09-24",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 919,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O919",
+        "long_term_gain": "V919"
+      }
+    },
+    {
+      "id": "XLK-2025-12-22-capital-components",
+      "ticker": "XLK",
+      "cusip": "81369Y803",
+      "record_date": "2025-12-22",
+      "ex_date": "2025-12-22",
+      "payable_date": "2025-12-24",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 920,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O920",
+        "long_term_gain": "V920"
+      }
+    },
+    {
+      "id": "XLC-2025-03-24-capital-components",
+      "ticker": "XLC",
+      "cusip": "81369Y852",
+      "record_date": "2025-03-24",
+      "ex_date": "2025-03-24",
+      "payable_date": "2025-03-26",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 923,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O923",
+        "long_term_gain": "V923"
+      }
+    },
+    {
+      "id": "XLC-2025-06-23-capital-components",
+      "ticker": "XLC",
+      "cusip": "81369Y852",
+      "record_date": "2025-06-23",
+      "ex_date": "2025-06-23",
+      "payable_date": "2025-06-25",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 924,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O924",
+        "long_term_gain": "V924"
+      }
+    },
+    {
+      "id": "XLC-2025-09-22-capital-components",
+      "ticker": "XLC",
+      "cusip": "81369Y852",
+      "record_date": "2025-09-22",
+      "ex_date": "2025-09-22",
+      "payable_date": "2025-09-24",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 925,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O925",
+        "long_term_gain": "V925"
+      }
+    },
+    {
+      "id": "XLC-2025-12-22-capital-components",
+      "ticker": "XLC",
+      "cusip": "81369Y852",
+      "record_date": "2025-12-22",
+      "ex_date": "2025-12-22",
+      "payable_date": "2025-12-24",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 926,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O926",
+        "long_term_gain": "V926"
+      }
+    },
+    {
+      "id": "SPY-2025-03-21-capital-components",
+      "ticker": "SPY",
+      "cusip": "78462F103",
+      "record_date": "2025-03-21",
+      "ex_date": "2025-03-21",
+      "payable_date": "2025-04-30",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 1018,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O1018",
+        "long_term_gain": "V1018"
+      }
+    },
+    {
+      "id": "SPY-2025-06-20-capital-components",
+      "ticker": "SPY",
+      "cusip": "78462F103",
+      "record_date": "2025-06-20",
+      "ex_date": "2025-06-20",
+      "payable_date": "2025-07-31",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 1019,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O1019",
+        "long_term_gain": "V1019"
+      }
+    },
+    {
+      "id": "SPY-2025-09-19-capital-components",
+      "ticker": "SPY",
+      "cusip": "78462F103",
+      "record_date": "2025-09-19",
+      "ex_date": "2025-09-19",
+      "payable_date": "2025-10-31",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 1020,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O1020",
+        "long_term_gain": "V1020"
+      }
+    },
+    {
+      "id": "SPY-2025-12-19-capital-components",
+      "ticker": "SPY",
+      "cusip": "78462F103",
+      "record_date": "2025-12-19",
+      "ex_date": "2025-12-19",
+      "payable_date": "2026-01-30",
+      "document": "ssga-ici-primary-2025",
+      "scope": "exact_event",
+      "estimated": false,
+      "row": 1021,
+      "values": {
+        "short_term_gain": "0",
+        "long_term_gain": "0"
+      },
+      "cells": {
+        "short_term_gain": "O1021",
+        "long_term_gain": "V1021"
+      }
+    }
+  ]
+}

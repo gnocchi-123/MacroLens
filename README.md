@@ -764,3 +764,39 @@ uv run --locked --extra price-audit pytest -q
 uv run --locked --extra price-audit ruff check .
 uv run --locked --extra price-audit ruff format --check .
 ```
+
+### 공식 분배 근거 연결 후속 (2026-11-08)
+
+[공식 분배 근거 조사](docs/m4_distribution_evidence.md)에 상품·연도별 미확인 항목과 출처를 기록했다.
+2025년 State Street ICI Primary 명세의 단기·장기 자본이득 **개별 사건별 명시 0**으로
+XLC·XLK·SPY 각6개 빈 셀을 해석한다. 같은 상품·CUSIP·배당락일·기준일·지급일이 모두 맞아야 한다.
+다른 연도, 빈칸 일반 규칙, 연간 합계, 비영 세무 분류의 추가 현금, 주당 기준 승인은 포함하지 않는다.
+
+기존 `kis ledger`는 동봉한 `src/macrolens/evidence/ssga_distribution_v1.json`을 기본으로 적용한다.
+별도 API 호출이나 인증은 없다. 원본 빈칸은 그대로 두고 계산용 입력에만 근거 있는 해석을 적용한다.
+결과의 `distribution_interpretations`와 `distribution_evidence_by_year`에서 대상 사건·입력·해소 건수를
+확인할 수 있다. 상충 자료는 보류하며 원본 held/conditional/total_return_eligible는 해제하지 않는다.
+기존 `--review-file`의 가격·주당 기준 조건과 분리된 기능이다.
+
+KIS 없이 공식 XLSX만으로 사건별 목록을 검수하는 새 명령 형식:
+
+```text
+uv run --locked --extra price-audit python -m macrolens.kis distribution-evidence \
+  --issuer-file <이미 저장한 공식 XLSX 경로> \
+  --start 2020-06-01 --end 2026-09-30
+```
+
+실제 기존 XLSX에 위 명령을 직접 실행한 결과는 상품마다
+`공식 사건 근거로 해석한 빈 셀 6개 / 실제 가격 원장 미실행`이었다.
+출력은 새 `data/kis_distribution_evidence/<ID>/report.md`와 `evidence.json`에 저장된다.
+종료 코드0은 분배 근거 보고서 저장 성공이며 가격 적격성이나 총수익 계산 성공이 아니다.
+
+- 목록이 다른 경우: `distribution-evidence --evidence-file <검토한 목록.json>`.
+- 원장의 별도 목록 지정: `ledger ... --distribution-evidence <검토한 목록.json>`.
+- 미지정 시 동일한 동봉 목록 사용. 목록 사본과 SHA256도 결과에 남긴다.
+- 근거의 원문은 수집 때 확인한 문서 해시로 추적한다. 매 실행에서 원문을 재다운로드하거나
+  문서 내용을 자동 인증하지 않는다. 원본 XLSX/PDF 및 개인 계산 결과를 Git에 올리지 않는다.
+
+현재 다른 연도의 자본이득·주당 기준·가격 기준 등이 남아 있으므로 **사용자에게 지금 같은 원장 명령을
+다시 실행하도록 요구하지 않는다.** 위 명령은 도구 사용법이며 전기간 계산 가능 안내가 아니다.
+원장 실행이 필요한 단계가 되면 확인된 자료 범위로 명시적으로 실행한다.
