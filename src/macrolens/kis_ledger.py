@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .distribution_evidence import interpret, load_catalog, summary
 from .kis_audit import audit_archive
+from .kis_client import ENDPOINT_PATHS, ENDPOINTS
 from .kis_collect import SAMPLE, verify_archive
 from .kis_events import KNOWN_MISSING_POLICY, review_events
 from .ledger import RULES_VERSION, blocker, calculate, number
@@ -26,6 +27,55 @@ CLAIMS = {
     "split_coverage": ("complete", "해당 기간 공식 분할 목록의 완전성 근거 필요"),
     "distribution_coverage": ("complete", "공식 분배금 자료의 해당 기간 완전성 근거 필요"),
 }
+PRICE_CONTRACT_REFERENCE = {
+    "id": "kis-dailyprice-option-definition-20261108",
+    "title": "KIS official chk_dailyprice.py: Parameters and COLUMN_MAPPING",
+    "url": "https://github.com/koreainvestment/open-trading-api/blob/"
+    "3a9be59a3ed8745720dc3aa9d584bdf3b7830362/"
+    "examples_llm/overseas_stock/dailyprice/chk_dailyprice.py#L24-L57",
+    "sha256": "ea386811dfadb5d37314aefbbf39b541298b364ecb04ce83ac245f39906ff51c",
+    "checked_at": "2026-11-08T11:05:58.975350+00:00",
+    "definitions": {"MODP=0": "수정주가 미반영", "MODP=1": "수정주가 반영", "clos": "종가"},
+    "scope": "request_option_and_field_definition_only",
+    "not_established": ["regular_session_close_definition", "full_history_as_traded_verification"],
+}
+
+
+def price_contract_evidence(meta, ticker, price_sources, start, end):
+    """Link the documented option to used, hash-checked archive pages, not to eligibility."""
+    names = sorted({name for day, name in price_sources.items() if start <= day <= end})
+    pages = []
+    for name in names:
+        records = [record for record in meta["pages"] if record["file"] == name]
+        record = records[0] if len(records) == 1 else {}
+        params = record.get("params", {})
+        matched = (
+            meta.get("provider") == "kis"
+            and record.get("endpoint") == "dailyprice"
+            and record.get("path") == ENDPOINT_PATHS["dailyprice"]
+            and record.get("tr_id") == ENDPOINTS["dailyprice"][0]
+            and all(
+                params.get(k) == v
+                for k, v in {"SYMB": ticker, "EXCD": "AMS", "GUBN": "0", "MODP": "0"}.items()
+            )
+        )
+        pages.append({"file": name, "sha256": record.get("sha256"), "request_matches": matched})
+    return {
+        "reference_id": PRICE_CONTRACT_REFERENCE["id"],
+        "ticker": ticker,
+        "start": start,
+        "end_inclusive": end,
+        "status": (
+            "matched_archived_requests"
+            if pages and all(p["request_matches"] for p in pages)
+            else "request_not_matched"
+            if pages
+            else "no_usable_price_pages"
+        ),
+        "pages": pages,
+        "automatically_approves_price_basis": False,
+        "notice": "확인된 요청 옵션 정의. 실제 가격 기준·정규장 종가·구간 완전성 승인이 아님",
+    }
 
 
 def review_template(bindings, events, start, end):
@@ -306,6 +356,9 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
             source_price_status=source_audit["symbols"][ticker]["status"],
             current_price_status=audit["symbols"][ticker]["status"],
             source_total_return_eligible=source_audit.get("total_return_eligible", False),
+            price_contract_evidence=price_contract_evidence(
+                meta, ticker, price_sources, start, end
+            ),
             split_diagnostics=diagnostics,
             source_price_errors=[x for x in audit["price_row_errors"] if x["ticker"] == ticker],
             issuer_kis_crosscheck=review_events(
@@ -346,6 +399,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
             "documents": distribution_catalog["documents"],
             "source_verification": "reviewed catalogue; no network or fresh document verification",
         },
+        "price_contract_reference": PRICE_CONTRACT_REFERENCE,
         "status": "held"
         if any(s["status"] == "held" for s in symbols.values())
         else "calculated_under_reviewed_inputs",
@@ -356,6 +410,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
                 "kis_ledger.py",
                 "price_issuer.py",
                 "kis_audit.py",
+                "kis_client.py",
                 "kis_collect.py",
                 "kis_events.py",
                 "distribution_evidence.py",
@@ -434,6 +489,12 @@ def render(result):
             f"{t}: 공식 사건별 명시 0으로 해석한 빈 자본이득 셀 {resolved}개.",
             "원본 빈칸은 보존. 주당 기준·다른 연도·전체 적격성 승인은 별도입니다.",
         ]
+        contract = s["price_contract_evidence"]
+        lines += [
+            f"{t}: KIS 공식 MODP=0 미수정 옵션과 사용 후보 원본 요청 대조: "
+            f"{contract['status']} / {len(contract['pages'])}페이지.",
+            "옵션 정의 확인은 당시 거래가격·정규장 종가·기간 완전성의 자동 승인이 아닙니다.",
+        ]
         lines += ["", f"{t} 보류 사유 (입력·해소 근거):"]
         lines.extend(
             f"- {b['date']} / {b['input']} / {b['code']}: {b['resolution']}" for b in s["blockers"]
@@ -445,6 +506,7 @@ def render(result):
         "원본 held/conditional 및 total_return_eligible는 변경하지 않습니다.",
         "strict_point_in_time=false. 빈 자본이득/미확인 주당 기준은 unknown입니다.",
         "MODP=1에는 배당을 더하거나 분할비를 다시 적용하지 않았습니다.",
+        "KIS 옵션 정의 출처: " + result["price_contract_reference"]["url"],
         "COMPLETE는 보존 완료이며 적격성 승인이 아닙니다.",
         "",
     ]

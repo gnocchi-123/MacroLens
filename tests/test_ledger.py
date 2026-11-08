@@ -1,5 +1,6 @@
 """Synthetic accounting and offline archive tests; no real market-data certification."""
 
+import copy
 import json
 import socket
 from fractions import Fraction
@@ -257,6 +258,12 @@ def test_offline_adapter_preserves_sources_and_deterministic_replay(saved, tmp_p
     kwargs = dict(saved=saved, output=tmp_path / "ledger", start="2025-12-01", end="2025-12-16")
     held, folder = kis_ledger.run(**kwargs)
     assert held["status"] == "held" and not held["symbols"]["SPY"]["rows"]
+    xlk = held["symbols"]["XLK"]
+    contract = xlk["price_contract_evidence"]
+    assert contract["status"] == "matched_archived_requests" and contract["pages"]
+    assert not contract["automatically_approves_price_basis"]
+    assert {"unknown_price_basis", "unknown_share_basis"} <= {b["code"] for b in xlk["blockers"]}
+    assert not xlk["source_total_return_eligible"] and xlk["total_return"] is None
     review = reviewed_file(folder, tmp_path)
     first, path1 = kis_ledger.run(**kwargs, review_file=review)
     second, path2 = kis_ledger.run(**kwargs, review_file=review)
@@ -271,6 +278,40 @@ def test_offline_adapter_preserves_sources_and_deterministic_replay(saved, tmp_p
     inputs = json.loads((path1 / "inputs.json").read_text())
     assert inputs["XLK"]["events"][0]["dividend"] == "1.12345678901234567890"
     assert before == {p.name: p.read_bytes() for p in saved.iterdir()}
+
+
+def test_price_option_evidence_does_not_cross_series_or_approve_missing_requests(saved):
+    meta = kis_collect.verify_archive(saved)
+    page = next(
+        r
+        for r in meta["pages"]
+        if r["endpoint"] == "dailyprice"
+        and r["params"]["SYMB"] == "XLK"
+        and r["params"]["MODP"] == "0"
+    )
+    before = copy.deepcopy(meta)
+    sources = {"2025-12-01": page["file"], "2024-01-02": "outside-interval.json"}
+
+    def check(candidate, candidate_sources=sources):
+        return kis_ledger.price_contract_evidence(
+            candidate, "XLK", candidate_sources, "2025-12-01", "2025-12-16"
+        )
+
+    matched = check(meta)
+    assert matched["status"] == "matched_archived_requests"
+    assert [p["file"] for p in matched["pages"]] == [page["file"]]
+    for key, value in (("SYMB", "SPY"), ("MODP", "1"), ("GUBN", "1"), ("EXCD", "NAS")):
+        bad = copy.deepcopy(meta)
+        next(r for r in bad["pages"] if r["file"] == page["file"])["params"][key] = value
+        assert check(bad)["status"] == "request_not_matched"
+    for key in ("endpoint", "path", "tr_id"):
+        bad = copy.deepcopy(meta)
+        next(r for r in bad["pages"] if r["file"] == page["file"])[key] = "wrong-contract"
+        assert check(bad)["status"] == "request_not_matched"
+    assert check({**meta, "pages": []})["status"] == "request_not_matched"
+    assert check({**meta, "pages": meta["pages"] + [page]})["status"] == "request_not_matched"
+    assert check(meta, {})["status"] == "no_usable_price_pages"
+    assert meta == before
 
 
 def test_review_does_not_override_detected_back_adjusted_prices(saved, tmp_path, monkeypatch):
