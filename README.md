@@ -1,6 +1,6 @@
 # MacroLens
 
-2026-11-01 최신 상태: 사용자 Codespaces에서 세 상품 가격·권리를 확보했고, XLC 2023-06-05는 알려진 결측으로 유지한다. KIS 문의·반복 조회는 필수가 아니다. 이 환경에서는 공식 배당 XLSX(각 26건)를 새로 확보했으나 사용자 KIS 원본은 없어 실제 교차 대조는 미실시다. 원자료 판정과 결측 처리 조건을 붙인 연구 사용 가능성을 구분하며 백테스트는 시작하지 않았다.
+2026-11-10 최신 상태: 세 상품의 오프라인 원장과 2025년 추정 명령을 구현했다. XLK A/B의 실제 자료 추정 결과는 사용자 Codespaces 보고이며, 이번 개발 환경에는 KIS 원본이 없어 XLC·SPY 실제 추정은 미실시다. 추정은 공식 적격성 승인이나 전략 백테스트가 아니다. XLC 2023-06-05 결측·기존 원자료 판정을 유지한다.
 
 2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
 
@@ -872,3 +872,69 @@ pre_split_dividends_x2: estimated_not_validated / 원장 364행
 MODP=1에 배당을 더하지 않는다. 식별/가격 오류, 결측, 사건 충돌, 이미 조정된 가격의 이중 분할
 징후는 추정에서도 차단한다. `strict_point_in_time=false`, `total_return_eligible=false`를 유지한다.
 개발 환경에는 실제 KIS 원본이 없어 실제 추정은 미실시다. 합성 테스트를 실제 XLK 성과로 표시하지 않는다.
+
+### XLC·SPY 2025 추정하기 (2026-11-10 사용자 선택)
+
+기존 XLK 명령은 그대로 유지한다. 새 `estimate-xlc-spy-2025`는 **XLC·SPY 두 상품**의
+2025-01-02 종가 1주 매수~2025-12-31만 계산한다. 두 상품의 공식 배당액을 당시 1주 기준으로
+가정하여 그대로 쓰며 XLK의 분할이나 배당 2배 환산을 적용하지 않는다. MODP=0 당시 정규장
+종가·공식 4건 분배 목록의 충분성·2025년 무분할도 명시적인 가정이다. 저장 권리의 추가 사건이나
+가격과 모순되면 보류한다. 금액·날짜·OHLC 오류나 거래일 결측을 가정으로 없애지 않는다.
+
+**사용자 XLK 실행 기록:** A 24.891566318426%, B 25.471414868163%, B−A 0.579848549737%p,
+각 364행, 추정 보류 사유 없음. 검증된 수익률·오차 상하한이 아니며 이 환경에서 재실행한 결과도
+아니다. 실행 ID·원본 해시는 전달되지 않아 기록하지 않았다. XLC·SPY 실제 숫자는 아직 없다.
+
+Codespaces에서 기존 저장본에 실행한다. 인증·API 키·새 다운로드는 필요 없다.
+
+```bash
+cd /workspaces/MacroLens
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv run --locked --extra price-audit python -m macrolens.kis estimate-xlc-spy-2025 \
+  data/kis/20261101T055700Z-9851ad4fe637
+```
+
+폴더가 없다면 아래 명령으로 기존 자료 위치를 찾고 경로만 바꾼다. 보고서 파일 자체가 아니라
+`COMPLETE`와 `manifest.json`이 들어 있는 **폴더**를 지정한다.
+
+```bash
+rg --files --no-ignore data/kis -g COMPLETE -g manifest.json -g issuer-distributions.xlsx
+rg --files --no-ignore data/price_audit -g issuer-distributions.xlsx
+```
+
+공식 XLSX 미첨부 원수집본에는 이미 저장한 파일을 별도 지정할 수 있다.
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis estimate-xlc-spy-2025 \
+  data/kis/20261031T112008Z-57b1c77748be \
+  --issuer-file data/price_audit/20261101T054536Z-5a34adf9bc3c/issuer-distributions.xlsx
+```
+
+가격·사건 검사가 통과한 경우의 출력 예시이며 실제 실행 결과를 미리 보장하지 않는다.
+
+```text
+XLC·SPY 2025 추정: estimated_not_validated / real
+XLC: estimated_not_validated / 원장 364행 / 보류 사유 0건
+SPY: estimated_not_validated / 원장 364행 / 보류 사유 0건
+추정 보고서: data/kis_ledger_estimates/<새 ID>/report.md
+검증된 총수익률이 아닙니다. 기존 판정·원본은 유지합니다.
+```
+
+- `report.md`에 두 상품의 추정률·연말 미수금·가정·보류 이유, `XLC-ledger.csv`와 `SPY-ledger.csv`에
+  날짜별 원장을 저장한다. 364행은 휴장일을 포함한 달력 날짜이고 250거래일 가격이 필요하다.
+- SPY 2025-12-19 배당락 사건의 지급일은 기존 공식 사건 목록에서 2026-01-30이다.
+  연말에는 **미수 배당**으로 평가액에 포함한다. 다음 거래일인 2026-02-02 재투자 계획만 기록하고,
+  2025년 원장에서는 지급·재투자를 실행하지 않는다. 시작 전 배당 권리도 만들지 않는다.
+- XLC 원본 전체 `held`는 그대로다. 2023-06-05 오류만으로 2025년을 차단하지 않고 요청 구간을
+  따로 검사한다. 2025년에 필요한 종가가 실제로 없으면 그날에서 멈추며 전체 추정률은 없다.
+- `result.json`의 `symbols.XLC`/`symbols.SPY`에서 판정·정확한 값·입력/코드 해시·
+  `stored_evidence_review`를 확인한다. `strict-result.json`/`strict-inputs.json`은 엄밀 판정과
+  변경 전 입력, `scenario-events.json`은 상품별 별도 추정 입력이다. 원본 null은 유지한다.
+- 모든 실행은 새 폴더를 만든다. 같은 입력·코드·달력은 같은 계산 결과/CSV를 만들지만 폴더 ID는 다르다.
+  종료 코드0은 두 추정 완료, 2는 한 상품 이상 `held`, 1은 파일/무결성 등 실행 오류다.
+  보류 시 보고서의 **상품·날짜·필드·원인 코드**를 확인한다. 다른 상품의 완료 결과는 별도로 남긴다.
+
+원장 계산 규칙·원래 평가 기간 후보·M3 동결은 그대로다. `strict_point_in_time=false`와
+`total_return_eligible=false`를 유지한다. 개발 환경에서는 합성 자료로만 실행했으며,
+사용자 자료의 두 보고서와 SPY 연말 잔액 확인이 남아 있다. 12개 확대·전략 백테스트는 시작하지 않았다.

@@ -2,6 +2,7 @@
 
 import copy
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import kis_ledger
@@ -30,49 +31,73 @@ ASSUMPTIONS = {
 
 
 def scenarios(strict, inputs):
+    return symbol_scenarios(strict, inputs, "XLK", PROFILE, EXPECTED_EVENTS, SCENARIOS, ASSUMPTIONS)
+
+
+def symbol_scenarios(
+    strict,
+    inputs,
+    ticker,
+    profile,
+    expected_events,
+    scenario_definitions,
+    assumptions,
+    extra_blockers=(),
+):
     """Reuse exact accounting, relaxing only named semantic unknowns in this fixed scope."""
-    if (strict["ticker"], strict["start"], strict["end_inclusive"]) != ("XLK", START, END):
-        raise AuditError("추정 프로필은 XLK 2025-01-02~2025-12-31에만 적용됩니다")
+    if (strict["ticker"], strict["start"], strict["end_inclusive"]) != (ticker, START, END):
+        raise AuditError(f"추정 프로필은 {ticker} 2025-01-02~2025-12-31에만 적용됩니다")
     events = inputs["events"]
     event_keys = [
         tuple(e.get(k) for k in ("cusip", "ex_date", "record_date", "payable_date")) for e in events
     ]
-    problems, assumed = [], []
-    if len(event_keys) != 4 or set(event_keys) != EXPECTED_EVENTS:
+    problems, assumed = copy.deepcopy(list(extra_blockers)), []
+    if len(event_keys) != 4 or set(event_keys) != expected_events:
         problems.append(
-            blocker("XLK", START, "events", "estimate_event_set_mismatch", "알려진 공식 4건 확인")
+            blocker(ticker, START, "events", "estimate_event_set_mismatch", "알려진 공식 4건 확인")
         )
     if strict["price_contract_evidence"]["status"] != "matched_archived_requests":
         problems.append(
-            blocker("XLK", START, "MODP=0", "estimate_request_mismatch", "저장 요청 계약 확인")
+            blocker(ticker, START, "MODP=0", "estimate_request_mismatch", "저장 요청 계약 확인")
         )
     # A missing/contradictory split check is not a reasonable price-basis assumption.
-    if not any(
+    if ticker == "XLK" and not any(
         d["date"] == kis_ledger.SPLIT["date"]
         and d["status"] == "consistent_with_as_traded_at_this_split"
         for d in strict["split_diagnostics"]
     ):
         problems.append(
             blocker(
-                "XLK", START, "split", "estimate_split_unverified", "저장된 분할 전후 대조 필요"
+                ticker, START, "split", "estimate_split_unverified", "저장된 분할 전후 대조 필요"
             )
+        )
+    if ticker != "XLK" and inputs["splits"]:
+        problems.append(
+            blocker(ticker, START, "split", "unexpected_split_input", "무분할 가정과 입력 충돌")
         )
     for issue in strict["blockers"]:
         field = issue["input"]
         allowed = (
-            issue["ticker"] == "XLK"
-            and field in ASSUMPTIONS
+            issue["ticker"] == ticker
+            and field in assumptions
             and issue["code"] == "unknown_" + field
         )
         if field == "share_basis":
-            allowed = allowed and issue["date"] in {e[1] for e in EXPECTED_EVENTS}
+            allowed = allowed and issue["date"] in {e[1] for e in expected_events}
         (assumed if allowed else problems).append(copy.deepcopy(issue))
-    sessions, calendar = trading_sessions(START, "2026-01-14")
+    last_pay = max([END] + [e["payable_date"] for e in events])
+    sessions, calendar = trading_sessions(
+        START, (date.fromisoformat(last_pay) + timedelta(days=14)).isoformat()
+    )
     results, scenario_inputs = {}, {}
-    for key, (label, pre_multiplier) in SCENARIOS.items():
+    for key, (label, pre_multiplier) in scenario_definitions.items():
         effective, changes = copy.deepcopy(events), []
         for event in effective:
-            multiplier = pre_multiplier if event["ex_date"] < kis_ledger.SPLIT["date"] else 1
+            multiplier = (
+                pre_multiplier
+                if ticker == "XLK" and event["ex_date"] < kis_ledger.SPLIT["date"]
+                else 1
+            )
             original = event["dividend"]
             try:
                 event["dividend"] = str(number(original) * multiplier)
@@ -80,7 +105,7 @@ def scenarios(strict, inputs):
                 pass  # Core still blocks missing/invalid amounts. Never invent zero.
             event["share_basis"] = "per_ex_date_share"
             event["share_basis_status"] = "assumed_not_verified"
-            event["assumption_profile"] = PROFILE
+            event["assumption_profile"] = profile
             changes.append(
                 {
                     "ex_date": event["ex_date"],
@@ -91,7 +116,7 @@ def scenarios(strict, inputs):
                 }
             )
         result = calculate(
-            "XLK",
+            ticker,
             START,
             END,
             inputs["prices_modp0"],
@@ -103,17 +128,17 @@ def scenarios(strict, inputs):
         result["estimated_total_return"] = result.pop("total_return")
         if result["status"] == "calculated_under_reviewed_inputs":
             result["status"] = "estimated_not_validated"
-        result.update(label=label, assumptions=ASSUMPTIONS, dividend_basis_changes=changes)
+        result.update(label=label, assumptions=assumptions, dividend_basis_changes=changes)
         results[key] = result
         scenario_inputs[key] = effective
     complete = all(r["status"] == "estimated_not_validated" for r in results.values())
     difference = None
-    if complete:
+    if complete and ticker == "XLK":
         a, b = [number(r["estimated_total_return"]["exact"]) for r in results.values()]
         difference = encoded((b - a) * 100)
     return {
-        "profile": PROFILE,
-        "ticker": "XLK",
+        "profile": profile,
+        "ticker": ticker,
         "start": START,
         "end_inclusive": END,
         "status": "estimated_not_validated" if complete else "held",
@@ -125,11 +150,15 @@ def scenarios(strict, inputs):
         "strict_point_in_time": False,
         "rules_version": RULES_VERSION,
         "calendar": calendar,
-        "assumptions": ASSUMPTIONS,
+        "assumptions": assumptions,
         "assumed_unresolved_conditions": assumed,
         "scenarios": results,
         "scenario_difference_percentage_points": difference,
-        "sensitivity_notice": "B-A는 두 가정의 차이이며 오차 상한·신뢰구간·전략 비교가 아닙니다",
+        "sensitivity_notice": (
+            "B-A는 두 가정의 차이이며 오차 상한·신뢰구간·전략 비교가 아닙니다"
+            if ticker == "XLK"
+            else "단일 주당 기준 가정의 추정이며 오차 범위를 계산하지 않습니다"
+        ),
     }, scenario_inputs
 
 

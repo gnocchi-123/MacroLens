@@ -291,7 +291,7 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
                             "총분배액에 재가산 금지",
                         )
         prices, price_sources, duplicates = exact_prices(saved, normalized[ticker], "0")
-        adjusted, _, _ = exact_prices(saved, normalized[ticker], "1")
+        adjusted, adjusted_sources, _ = exact_prices(saved, normalized[ticker], "1")
         for issue in audit["symbols"][ticker]["issues"]:
             if issue.startswith(("가격 페이지 진행", "가격 응답 종목", "가격 배열 형식")):
                 hold(start, "price_pages", "price_page_contract_failed", issue + "; 원본 대조 필요")
@@ -374,6 +374,8 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
         prepared[ticker] = {
             "prices_modp0": prices,
             "price_source_files": price_sources,
+            "prices_modp1": adjusted,
+            "price_source_files_modp1": adjusted_sources,
             "events": events[ticker],
             "source_events": source_events,
             "splits": splits,
