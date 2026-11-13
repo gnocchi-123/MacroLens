@@ -1,6 +1,6 @@
 # MacroLens
 
-2026-11-10 최신 상태: 세 상품의 오프라인 원장과 2025년 추정 명령을 구현했다. XLK A/B의 실제 자료 추정 결과는 사용자 Codespaces 보고이며, 이번 개발 환경에는 KIS 원본이 없어 XLC·SPY 실제 추정은 미실시다. 추정은 공식 적격성 승인이나 전략 백테스트가 아니다. XLC 2023-06-05 결측·기존 원자료 판정을 유지한다.
+2026-11-13 최신 상태: 2025년 추정 검토를 위해 현재 환경과 저장 자료를 확인했다. KIS 원본·개인 추정 결과가 없어 실제 XLC·SPY 실행은 미실시이며, XLK는 기존 사용자 보고만 있다. 아래에 기존 결과 재사용·오프라인 실행·필요한 최소 요약 확인 절차를 기록했다. 추정은 공식 적격성 승인이나 전략 백테스트가 아니다.
 
 2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
 
@@ -938,3 +938,86 @@ SPY: estimated_not_validated / 원장 364행 / 보류 사유 0건
 원장 계산 규칙·원래 평가 기간 후보·M3 동결은 그대로다. `strict_point_in_time=false`와
 `total_return_eligible=false`를 유지한다. 개발 환경에서는 합성 자료로만 실행했으며,
 사용자 자료의 두 보고서와 SPY 연말 잔액 확인이 남아 있다. 12개 확대·전략 백테스트는 시작하지 않았다.
+
+### 2025년 세 상품 검토 마무리: 저장 결과 먼저 확인 (2026-11-13)
+
+기존 결과가 있으면 같은 계산을 다시 할 필요가 없다. Codespaces에서 먼저 다음을 실행한다.
+
+```bash
+cd /workspaces/MacroLens
+git status --short --branch
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+rg --files --no-ignore data/kis_ledger_estimates -g report.md
+```
+
+`data/kis_ledger_estimates`가 없다는 메시지는 추정 결과 폴더를 아직 만들지 않았다는 뜻이다.
+위 목록에 XLC·SPY 2025 보고서가 있으면 먼저 열어 자료 종류 `real`, 기간과 사용 입력을 확인한다.
+`strict/` 안의 보고서는 엄밀 원장이므로 추정 결과와 구분한다. 기존 XLK 결과도 재사용한다.
+해당 추정 결과가 없을 때만 앞 절의 `estimate-xlc-spy-2025`를 저장된 KIS 폴더에 실행한다.
+가격 원본 자체가 없으면 새 수집을 하지 말고 기존 저장 위치부터 확인한다.
+
+보고서의 수익률·미수금에 더해 **연말 현금, 평가액 산식 일치, SPY 지급 예정일**을 확인하려면,
+아래 `실행_ID`를 실제 출력 폴더명으로 바꾸어 실행한다. XLK 결과 폴더에도 같은 명령을 사용할 수 있다.
+파일을 읽기만 하며 인증·네트워크·원장 재계산·파일 수정은 하지 않는다.
+
+```bash
+uv run --locked --extra price-audit python - 'data/kis_ledger_estimates/실행_ID' <<'PY'
+import hashlib
+import json
+import sys
+from fractions import Fraction
+from pathlib import Path
+
+folder = Path(sys.argv[1])
+if not (folder / 'COMPLETE').is_file():
+    raise SystemExit('COMPLETE가 있는 추정 결과 폴더를 지정하세요.')
+checksums = json.loads((folder / 'checksums.json').read_text())
+for name, expected in checksums.items():
+    if Path(name).name != name:
+        raise SystemExit('예상하지 않은 체크섬 경로: ' + name)
+    if hashlib.sha256((folder / name).read_bytes()).hexdigest() != expected:
+        raise SystemExit('저장 결과 해시 불일치: ' + name)
+result = json.loads((folder / 'result.json').read_text())
+print('실행:', folder.name, '/ 자료:', result['evidence_kind'])
+print('입력:', result['source_archive_id'], '/ 결과 SHA256:', checksums['result.json'])
+groups = result.get('symbols') or {result['ticker']: result}
+if not all('scenarios' in s for s in groups.values()):
+    raise SystemExit('strict 폴더가 아닌 추정 결과 폴더를 지정하세요.')
+for ticker, symbol in groups.items():
+    for scenario, item in symbol['scenarios'].items():
+        rows = item['rows']
+        last = rows[-1] if rows else None
+        summary = dict(
+            상품=ticker, 가정=scenario, 상태=item['status'], 원본판정=symbol['source_price_status'],
+            엄밀판정=symbol['strict_ledger_status'], 원장행=len(rows),
+            거래일행=sum(r['is_session'] for r in rows), 배당권리건수=len(item['claims']),
+            배당환산배율=sorted({c['multiplier'] for c in item['dividend_basis_changes']}),
+            분할반영일=[r['date'] for r in rows if Fraction(r['split_ratio']['exact']) != 1],
+            마지막날=last['date'] if last else None,
+            연말현금=last['cash']['display'] if last and last['date'] == '2025-12-31' else None,
+            연말미수금=last['receivable']['display'] if last and last['date'] == '2025-12-31' else None,
+            연말평가액=last['nav']['display'] if last and last['date'] == '2025-12-31' else None,
+            보류건수=len(item['blockers']),
+        )
+        if last:
+            n = lambda key: Fraction(last[key]['exact'])
+            summary['마지막날_평가액산식일치'] = n('nav') == n('shares') * n('close') + n('cash') + n('receivable')
+        summary['배당일정과상태'] = [
+            {k: c[k] for k in ('ex_date', 'record_date', 'payable_date', 'reinvest_date', 'state')}
+            for c in item['claims']
+        ]
+        print(json.dumps(summary, ensure_ascii=False))
+        for b in item['blockers'][:5]:
+            print('보류:', b['date'], b['input'], b['code'], b['resolution'])
+PY
+```
+
+다음 판단에 필요한 출력은 **보고서의 상품별 표·보류 사유와 위 요약**뿐이다. 키·토큰·원문 가격
+페이지·전체 CSV/JSON은 공유하지 않는다. 요약의 해시 검사는 결과 파일의 보존 확인이며 원본 자료의
+정확성 인증은 아니다. `synthetic` 결과는 실자료 표에 넣지 않는다.
+
+완료된 XLC·SPY는 각각 364행/250거래일/배당권리 4건/배율 `[1]`/분할반영일 `[]`가 예상된다.
+SPY 마지막 사건은 지급일 `2026-01-30`, 재투자 예정일 `2026-02-02`, 상태 `receivable`이어야 한다.
+연말 산식 일치는 `true`여야 한다. 보류 결과의 마지막 날이 연말 이전이면 잔액을 연말 값으로
+표시하지 않는다. 위 조건을 만족해도 `estimated_not_validated`이며 기존 엄밀 판정은 유지한다.
