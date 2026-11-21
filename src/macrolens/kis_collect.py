@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from .kis_client import ENDPOINT_PATHS, ENDPOINTS, KISError
-from .price_audit import dump, new_folder, now, sha
+from .price_audit import UNIVERSE, dump, new_folder, now, sha
 
 SAMPLE = ("XLC", "XLK", "SPY")
 CONTRACT = "kis-quotes-v1"
@@ -14,6 +14,43 @@ SOURCE_COMMIT = "3a9be59a3ed8745720dc3aa9d584bdf3b7830362"
 DEFAULT_START = "2020-06-01"
 DEFAULT_END = "2026-09-30"
 PRICE_PAGINATION = "date-boundary-v1"
+
+
+def archive_symbols(meta):
+    """Old archives have exactly SAMPLE; new scopes must be explicit and allowlisted."""
+    symbols = meta.get("symbols", list(SAMPLE))
+    if (
+        not isinstance(symbols, (list, tuple))
+        or not symbols
+        or any(not isinstance(t, str) or t not in UNIVERSE for t in symbols)
+        or len(set(symbols)) != len(symbols)
+    ):
+        raise KISError("invalid_or_duplicate_symbols")
+    return tuple(symbols)
+
+
+def price_ranges(meta):
+    start, end = date.fromisoformat(meta["start"]), date.fromisoformat(meta["end_inclusive"])
+    if start.isoformat() != meta["start"] or end.isoformat() != meta["end_inclusive"]:
+        raise KISError("collection_dates_require_iso_format")
+    if start > end:
+        raise KISError("invalid_collection_period")
+    if meta["mode"] != "probe":
+        return [("full", start.isoformat(), end.isoformat())]
+    # Non-overlapping edge windows; default windows remain identical to the old probe.
+    if (end - start).days < 20:
+        return [("old", start.isoformat(), end.isoformat())]
+    return [
+        ("recent", (end - timedelta(days=9)).isoformat(), end.isoformat()),
+        ("old", start.isoformat(), (start + timedelta(days=9)).isoformat()),
+    ]
+
+
+def rights_probe_range(meta):
+    if meta["start"] <= "2025-12-01" and meta["end_inclusive"] >= "2025-12-31":
+        return "2025-12-01", "2025-12-31"
+    end = date.fromisoformat(meta["end_inclusive"])
+    return max(meta["start"], (end - timedelta(days=30)).isoformat()), end.isoformat()
 
 
 def day(text):
@@ -54,15 +91,28 @@ def verify_archive(folder):
         or checks.get(meta["issuer_file"]) != meta.get("issuer_sha256")
     ):
         raise KISError("issuer_checksum_missing")
+    archive_symbols(meta)
+    price_ranges(meta)
     return meta
 
 
 class Archive:
     def __init__(
-        self, output, environment, mode, exchange, product, start, end, identity_source="overseas"
+        self,
+        output,
+        environment,
+        mode,
+        exchange,
+        product,
+        start,
+        end,
+        identity_source="overseas",
+        symbols=SAMPLE,
     ):
         if identity_source not in ("overseas", "basic-quote"):
             raise KISError("unknown_identity_source")
+        selected = archive_symbols({"symbols": symbols})
+        price_ranges({"start": start, "end_inclusive": end, "mode": mode})
         self.folder = new_folder(output, "kis_" + mode)
         try:
             commit = subprocess.check_output(
@@ -80,6 +130,7 @@ class Archive:
             "evidence_kind": "real",
             "environment": environment,
             "mode": mode,
+            "symbols": list(selected),
             "exchange": exchange,
             "product_type": product,
             "identity_source": identity_source,
@@ -257,7 +308,7 @@ def rights_pages(client, archive, ticker, start, end, max_pages=100):
 
 def collect(client, archive):
     meta = archive.meta
-    for ticker in SAMPLE:
+    for ticker in archive_symbols(meta):
         requests = [("search-info", {"PRDT_TYPE_CD": meta["product_type"], "PDNO": ticker})]
         if meta.get("identity_source", "overseas") == "basic-quote":
             requests = [
@@ -272,9 +323,7 @@ def collect(client, archive):
                     raise KISError("identity_missing_or_partial")
             except KISError as exc:
                 archive.failure(ticker, label, str(exc))
-        ranges = [("full", meta["start"], meta["end_inclusive"])]
-        if meta["mode"] == "probe":
-            ranges = [("recent", "2026-09-21", "2026-09-30"), ("old", "2020-06-01", "2020-06-10")]
+        ranges = price_ranges(meta)
         for label, start, end in ranges:
             for modp in ("0", "1"):
                 try:
@@ -292,7 +341,7 @@ def collect(client, archive):
                     archive.failure(ticker, label + "_modp" + modp, str(exc))
         # Probe only a small rights window; collect full periods in calendar-year chunks.
         windows = (
-            [("2025-12-01", "2025-12-31")]
+            [rights_probe_range(meta)]
             if meta["mode"] == "probe"
             else [
                 (max(meta["start"], f"{year}-01-01"), min(meta["end_inclusive"], f"{year}-12-31"))
@@ -343,9 +392,11 @@ def finish(archive, result):
         ),
         "상품 식별 경로: " + archive.meta.get("identity_source", "overseas"),
         (
-            "소량 가격 구간: 2020-06-01~06-10 및 2026-09-21~09-30. "
-            "최초~최종 날짜 사이 전체를 수집한 것이 아닙니다. "
-            "권리는 2025년 12월 현지 기준일/ICE 발표일 기준 조회입니다."
+            "소량 가격 구간: "
+            + ", ".join(f"{s}~{e}" for _, s, e in price_ranges(archive.meta))
+            + ". 최초~최종 날짜 사이 전체를 수집한 것이 아닙니다. 권리 구간: "
+            + "~".join(rights_probe_range(archive.meta))
+            + " (현지 기준일/ICE 발표일)."
             if archive.meta["mode"] == "probe"
             else "전체 목표 구간의 완전성은 coverage를 확인하세요."
         ),

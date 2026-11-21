@@ -8,7 +8,7 @@ from pathlib import Path
 from .distribution_evidence import interpret, load_catalog, summary
 from .kis_audit import audit_archive
 from .kis_client import ENDPOINT_PATHS, ENDPOINTS
-from .kis_collect import SAMPLE, verify_archive
+from .kis_collect import SAMPLE, archive_symbols, verify_archive
 from .kis_events import KNOWN_MISSING_POLICY, review_events
 from .ledger import RULES_VERSION, blocker, calculate, number
 from .price_audit import dump, new_folder, sha
@@ -218,6 +218,8 @@ def run(saved, output, start, end, issuer_file=None, review_file=None, distribut
     if date.fromisoformat(start) > date.fromisoformat(end):
         raise AuditError("시작일이 종료일보다 늦음")
     meta = verify_archive(saved)
+    if not set(SAMPLE) <= set(archive_symbols(meta)):
+        raise AuditError("기존 세 상품 원장은 XLC XLK SPY가 있는 원본만 지원합니다")
     source_audit = json.loads((saved / "audit.json").read_text())
     audit, normalized = audit_archive(saved, meta)
     issuer = (

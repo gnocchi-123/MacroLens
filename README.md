@@ -1,5 +1,7 @@
 # MacroLens
 
+2026-11-21 최신 상태: 12개 상품의 선택 수집과 오프라인 자료 현황 명령을 추가했다. 기존 세 상품의 사용자 2025 추정·잔액 점검은 완료 상태로 재사용한다. 이번 환경에서 공식 분배 XLSX 312건(상품별 26건), 새 9개 ETF의 2025년 사건별 세무 근거, 5개 ETF 분할 공지를 직접 확인했다. KIS 키·가격 원본과 Codespaces 내부 접근은 없어 새 9개 실가격 수집은 미실시다. 실행 순서는 아래 ‘12개 상품 자료 준비’ 절을 따른다. 12개 총수익 계산·전략 백테스트는 시작하지 않았다.
+
 2026-11-15 최신 상태: 사용자 Codespaces 출력 기준으로 XLC·XLK A/B·SPY의 2025년 추정 결과와 연말 잔액 요약 점검을 완료했다. 모두 연말 현금 0·평가액 산식 True이며, XLC와 XLK A/B의 미수금은 0, SPY 미수금은 2.010456502651 USD·receivable 상태다. 같은 추정이나 요약을 반복할 필요 없다. 가정에 따른 추정 점검이며 개발 환경의 독립 원본 검증·공식 적격성 승인·M4 전체 완료는 아니다.
 
 2026-10-23: **KIS 조회 전용 수집기와 오프라인 검수를 구현했습니다. 실제 인증·가격 수집은 미실시입니다.** KIS는 전용 명령에서만 활성화하며, 기존 FRED·샘플·이력·재현에는 KIS 키가 필요하지 않습니다.
@@ -1032,3 +1034,110 @@ SPY 마지막 사건은 지급일 `2026-01-30`, 재투자 예정일 `2026-02-02`
 다음 단계는 확대할 상품·기간의 자료/근거 가용성과 추정 가정 범위 검토이며 이번에는 착수하지 않았다.
 수신 결과와 공식 적격성의 미확인 항목은
 [검수 기록의 2026-11-15 절](docs/m4_data_audit.md#2026-11-15-사용자-xlcspy-실제-추정-결과-수신)에 구분했다.
+
+## 12개 상품 자료 준비 — 기존 3개 재사용, 새 9개만 수집
+
+`probe`, `collect`, `recheck`, `diagnose`의 대상 선택을 12개로 확장했다.
+대상을 생략한 기존 probe는 XLC·XLK·SPY를 그대로 사용한다. `collect`는 지정한 probe의
+상품·기간을 기본으로 사용하며, 성공한 상품의 일부를 `--symbols`로 명시할 수도 있다.
+`--start/--end`는 양끝 포함이며, collect에서 probe 범위를 벗어날 수 없다.
+소량 점검은 구간 양끝 10일씩(20일 이하 짧은 구간은 한 번)과 작은 권리 창만 확인한다.
+새 수집 전 이미 저장된 신규 상품이 있는지 확인하고, 기존 성공 자료를 반복 수집하지 않는다.
+
+```bash
+cd /workspaces/MacroLens
+git status --short --branch
+git switch feat/m4-kis-data
+git pull --ff-only origin feat/m4-kis-data
+uv sync --locked --extra price-audit
+
+# 저장 범위·상품만 표시한다. 비밀값이나 시장가격 원문은 출력하지 않는다.
+python - <<'PYCODE'
+import json
+from pathlib import Path
+for p in sorted(Path('data/kis').glob('*/manifest.json')):
+    if not (p.parent / 'COMPLETE').is_file():
+        continue
+    m = json.loads(p.read_text())
+    print(p.parent, m['mode'], m.get('symbols', ['XLC', 'XLK', 'SPY']),
+          m['start'], m['end_inclusive'])
+PYCODE
+```
+
+이번 개발 환경은 `/workspace/MacroLens`로 사용자 Codespaces와 다르다. GitHub 저장소 접근이
+Codespaces의 실행 권한을 뜻하지 않는다. KIS 키는 사용자 환경의 기존 설정을 사용하며 채팅에 보내지 않는다.
+미커밋 변경이나 fast-forward 실패가 나오면 강제 초기화하지 말고 그 상태를 보존한다.
+
+**아직 새 9개가 없는 경우** 다음 명령으로만 추가 수집한다. 기존 세 상품은 포함하지 않는다.
+기존 공식 XLSX 경로가 없으면 `find data -type f -name issuer-distributions.xlsx`로 저장본을 찾고
+`KIS_ISSUER`만 그 경로로 바꾼다. 공식 파일을 다시 다운로드할 필요는 없다.
+
+```bash
+KIS_ISSUER=data/kis/20261101T055700Z-9851ad4fe637/issuer-distributions.xlsx
+test -f "$KIS_ISSUER"
+uv run --locked --extra price-audit python -m macrolens.kis probe \
+  --env real --identity-source basic-quote \
+  --symbols XLE XLB XLI XLY XLP XLV XLF XLU XLRE \
+  --start 2020-06-01 --end 2026-09-30 --issuer-file "$KIS_ISSUER"
+```
+
+보고서의 상품 식별·USD·거래소 및 소량 가격 검사가 통과하면 `can_collect: true`와
+`수집 가능한 probe 상품: ...`가 나온다. 권리 완전성 등이 미확인이라 `held`여도 가격 수집
+준비 상태와는 별개다. 다음에는 **보고서 파일을 뺀 폴더 경로**를 입력한다.
+
+```bash
+read -r -p '방금 probe 보고서가 저장된 폴더 경로: ' KIS_NEW_PROBE
+uv run --locked --extra price-audit python -m macrolens.kis collect \
+  --env real --probe "$KIS_NEW_PROBE" --issuer-file "$KIS_ISSUER"
+```
+
+일부 상품만 통과하면 전체 collect는 중단한다. 출력된 `수집 가능한 probe 상품`만
+`collect ... --symbols XLE XLB ...`로 명시하면 그 상품만 수집한다. 실패 상품은 보류로 남긴다.
+키 환경 오류는 인증 문제, HTTP 오류는 접근/공급자 문제, OHLC·결측 오류는 가격 품질 문제다.
+정상 수집 저장 후에도 `held/conditional`, `can_collect: false`, 종료 코드 2가 나올 수 있다.
+**전체 수집의 can_collect는 적격성 지표가 아니며 probe 전용**이다. COMPLETE는 보존 완료다.
+실행 자체 실패는 `KIS 작업 중단:`과 종료 코드 1로 구분한다. 가격·페이지 문제는 `audit.json`의
+`coverage`, `price_row_errors`, manifest의 `failures`를 확인한다.
+
+기존 세 상품 폴더와 방금 추가한 폴더를 함께 **오프라인** 검사한다. 다시 인증·수집하지 않는다.
+이 명령은 각 원본을 해시 확인하고 현재 검사기로 재검수한다. 별도 recheck 반복은 필요 없다.
+
+```bash
+read -r -p '방금 collect 보고서가 저장된 폴더 경로: ' KIS_NEW_COLLECTION
+uv run --locked --extra price-audit python -m macrolens.kis inventory \
+  --saved data/kis/20261101T055700Z-9851ad4fe637 \
+  --saved "$KIS_NEW_COLLECTION" --issuer-file "$KIS_ISSUER"
+```
+
+상품이 겹치지 않는 저장본은 `--saved`를 더 지정할 수 있다. 동일 상품의 원수집·재검수를
+동시에 넣으면 `multiple_archives_for_symbol_select_one`으로 보류한다. 둘 중 하나만 선택한다.
+부분 기간 파일의 자동 병합·결측 메우기는 하지 않는다. 서로 다른 공식 XLSX가 첨부됐으면
+명시한 `--issuer-file`로 대조할 버전을 고르며 기존 첨부파일은 바뀌지 않는다.
+
+가격 없이 공식 저장본만 읽을 수도 있다:
+
+```bash
+uv run --locked --extra price-audit python -m macrolens.kis inventory \
+  --issuer-file "$KIS_ISSUER"
+```
+
+출력은 상품별 `not_run`(이 실행에 가격 원본 없음), `synthetic_only`(합성), `held`(보류),
+`conditional`(조건부 후보)와 MODP=0/1 행 수다. 사용 가능 승인 상태는 만들지 않는다.
+`data/kis_inventory/<새 ID>/report.md`를 열면 12개 표와 상품·연도별 빈칸 현황이 나온다.
+같은 폴더의 `inventory.json`에는 입력 해시, 기존/현재 판정, 모든 분배 날짜·원본 금액·별도 해석,
+공식 문서/셀 위치, 권리 대조, 분할 사건 전후 진단, 공통 거래일과 끊긴 구간이 있다.
+12개 전체 가격이 없으면 공통 기간은 `not_established`다. 모든 원본이 있어도 공통 날짜는
+가격 관측의 교집합이지 수익률 계산 적격성 승인이 아니다. 준비 기간은 2021-06-07 이전으로 따로 센다.
+
+최소 공유 출력은 **새 probe/collect/inventory 폴더 ID, 12개 행 수·범위·상태,
+결측 날짜/오류 이유, 5개 분할 진단 상태, common_prices 요약**이면 된다.
+키·전체 원본은 공유하지 않는다. 새 가정은 아직 제안이며, 가격 기준·분배 목록 충분성·주당 기준·
+2025 외 자본이득 빈칸을 해결하기 전 12개 수익률 추정 명령은 제공하지 않는다.
+
+개발 검사는 다음과 같다(모의 응답 테스트와 실제 자료 검수를 구별한다).
+
+```bash
+uv run --locked --extra price-audit pytest -q
+uv run --locked --extra price-audit ruff check .
+uv run --locked --extra price-audit ruff format --check .
+```

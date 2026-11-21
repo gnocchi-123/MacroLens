@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "id": "ssga-five-splits-2025-v1",
+  "document": {
+    "title": "State Street Investment Management Announces Share Splits for Five Select Sector SPDR ETFs",
+    "url": "https://www.nasdaq.com/press-release/state-street-investment-management-announces-share-splits-five-select-sector-spdrr",
+    "sha256": "84cf9926b6d13ceaf97511244fee30e01282d7663567508f8b2582fe6cb13359",
+    "checked_at": "2026-11-21",
+    "retrieved_at": "2026-11-15T07:48:35.332856+00:00",
+    "location": "Announcement dated 2025-11-20; five-fund split table and paragraph immediately before table",
+    "publisher": "State Street Investment Management; Business Wire release carried by Nasdaq"
+  },
+  "events": [
+    {
+      "ticker": "XLK",
+      "effective_date": "2025-12-05",
+      "previous_session": "2025-12-04",
+      "record_date": "2025-12-02",
+      "payable_after_close": "2025-12-04",
+      "new_per_old": 2
+    },
+    {
+      "ticker": "XLY",
+      "effective_date": "2025-12-05",
+      "previous_session": "2025-12-04",
+      "record_date": "2025-12-02",
+      "payable_after_close": "2025-12-04",
+      "new_per_old": 2
+    },
+    {
+      "ticker": "XLE",
+      "effective_date": "2025-12-05",
+      "previous_session": "2025-12-04",
+      "record_date": "2025-12-02",
+      "payable_after_close": "2025-12-04",
+      "new_per_old": 2
+    },
+    {
+      "ticker": "XLU",
+      "effective_date": "2025-12-05",
+      "previous_session": "2025-12-04",
+      "record_date": "2025-12-02",
+      "payable_after_close": "2025-12-04",
+      "new_per_old": 2
+    },
+    {
+      "ticker": "XLB",
+      "effective_date": "2025-12-05",
+      "previous_session": "2025-12-04",
+      "record_date": "2025-12-02",
+      "payable_after_close": "2025-12-04",
+      "new_per_old": 2
+    }
+  ],
+  "history_completeness": "unknown",
+  "historical_dividend_share_basis": "unknown",
+  "not_listed_does_not_mean_no_split": true
+}

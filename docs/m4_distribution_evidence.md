@@ -1,5 +1,7 @@
 # M4 공식 분배 근거 조사·원장 연결 (2026-11-08)
 
+2026-11-21 추가: 아래 초기 기록은 세 상품 조사 당시 상태다. 마지막 절에 새 9개의 독립적인 2025 사건별 세무 근거와 5개 ETF 분할 사실을 추가했다. 기존 세 상품 기본 원장 근거/가정은 변경하지 않았으며, 12개 현황 보고서에서만 새 목록을 사용한다.
+
 ## 범위와 현재 판정
 
 2020-06-01~2026-09-30의 XLC·XLK·SPY만 조사했다. 기존 원장을 재구현하거나 KIS를 다시
@@ -288,3 +290,48 @@ KIS와 공식 금액이 조금 달라도 평균하거나 수정하지 않는다.
 [primary]: https://www.ssga.com/library-content/products/fund-docs/etfs/us/tax-documents/SPDR_ICI_Tax_Summary_Primary.xlsx
 [splitform]: https://www.ssga.com/library-content/products/fund-docs/etfs/us/tax-documents/us-tax-form-state-street-technology-select-sector-spdr-etf-2025.pdf
 [estimate]: https://www.ssga.com/us/en/intermediary/resources/documents/etf-capital-gain-distributions
+
+## 2026-11-21: 신규 9개 ETF 근거를 별도 범위로 추가
+
+기존 세 상품 원장의 기본 `ssga_distribution_v1.json`은 변경하지 않았다.
+`ssga_distribution_expansion_v1.json`은 새 9개에 대해 **독립적으로 읽은 사건별 2025 근거**다.
+새 오프라인 inventory에서만 두 목록을 합친다. ETF/CUSIP/배당락·기준·지급일이 모두 같고
+문서 연도·범위와 O/V 셀 위치가 맞을 때만 해석한다. 2025 승인 가정의 확대가 아니다.
+
+| 공식 문서·위치 | 이번 확인 | 적용 대상·기간 | 확인하지 못한 사실 |
+| --- | --- | --- | --- |
+| [2025 ICI Primary][primary], `2025 ICI Primary` 시트; 헤더 11~13행, O/V열 | 새 36건의 명시 0, Estimated E 표식 없음 | 아래 9개 ETF의 2025 사건만 | 일반적인 빈칸=0, 과거 주당 기준, 사건 목록 완전성 |
+| [Historical Distributions][history], 상품별 행과 세 날짜 | 각 26건, 원본 금액/빈칸 보존 | 12개, 2020-06-01~2026-09-30 내 배당락 사건 | 당시에 공시된 값인지, 최신 이력의 분할 재표시 여부 |
+| [State Street 5개 ETF 분할 발표][five-splits], 2025-11-20 본문 첫 단락·5개 상품 표 | 12-02 기준, 12-04 장후 지급, **12-05 적용 2:1** | **XLK, XLY, XLE, XLU, XLB**의 해당 사건 | 전체 역사 무누락, 다른 ETF 무분할, 과거 배당 표시 기준 |
+
+새 사건 근거 행: XLB 875~878, XLV 881~884, XLP 887~890, XLY 893~896,
+XLE 899~902, XLF 905~908, XLI 911~914, XLRE 929~932, XLU 935~938.
+각 상품의 배당락/기준일 2025-03-24, 06-23, 09-22, 12-22;
+지급일 03-26, 06-25, 09-24, 12-24를 이력표와 대조했다.
+36×2=72개 명시 세무 0 중 이력표에서 원래 빈칸이던 54개만 별도 해석으로 해소했다.
+이미 이력표에 쓰인 0은 대조 근거이며 새 현금이 아니다. J열 총분배액에 O/V를 더하지 않는다.
+
+기존 파일의 해시는 D1/D2와 같다. 신규 분할 발표는 2026-11-15 저장 HTTP 200 응답을
+2026-11-21 재검토했다. 원문 SHA256과 URL·확인일은 `ssga_splits_v1.json`에 기록했다.
+공지 원문·XLSX·개인 실행 결과는 Git 제외 `data/`에 보존하고 공개 저장소에는 최소 사건 사실과
+근거 위치만 포함했다. 기존 개인 연구용 보존·재배포 제한을 완화하지 않았다.
+
+연도별 미확인 셀은 다음과 같다. 섹터 11개가 같은 개수라는 관찰이 다른 ETF로 근거를
+전용한 결과는 아니다. 코드 출력에는 각 ETF·사건별 필드와 근거가 따로 기록된다.
+
+| 연도 | 상품별 사건 수 | 섹터 11개 각각 남은 단기/장기 | SPY 남은 단기/장기 | 현재 해석 |
+| --- | ---: | --- | --- | --- |
+| 2020 (6월 이후) | 3 | 2/2 | 2/2 | 빈칸 unknown |
+| 2021 | 4 | 3/3 | 3/3 | 빈칸 unknown |
+| 2022 | 4 | 3/4 | 3/4 | 빈칸 unknown |
+| 2023 | 4 | 3/3 | 3/4 | 빈칸 unknown |
+| 2024 | 4 | 3/3 | 3/3 | 빈칸 unknown |
+| 2025 | 4 | 0/0 | 0/0 | 해당 ETF의 개별 최종 사건 근거, 주당 기준은 unknown |
+| 2026 (9월까지) | 3 | 3/3 | 3/3 | 최종 사건별 근거 미확보; 추정 공지로 대체 안 함 |
+
+해소 조건은 **해당 ETF·사건의 최종 명세에서 단기/장기 금액 각각 확인**, 또는
+**동일 분배 사건의 당시 주당 금액과 현재 표의 기준을 설명하는 공식 자료**다.
+이번에는 반복 조사나 문의를 필수로 두지 않는다. 자료 부족 구간 보류와 명시적 추정 가정의
+후속 선택지를 남기며, 수익률이 유리한 구간 선택·자동 빈칸 0·다른 상품의 XLK 2배 가정은 하지 않는다.
+
+[five-splits]: https://www.nasdaq.com/press-release/state-street-investment-management-announces-share-splits-five-select-sector-spdrr

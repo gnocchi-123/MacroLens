@@ -13,11 +13,13 @@ from .kis_collect import (
     DEFAULT_START,
     SAMPLE,
     Archive,
+    archive_symbols,
     collect,
     finish,
+    price_ranges,
     verify_archive,
 )
-from .price_audit import dump, sha
+from .price_audit import UNIVERSE, dump, sha
 from .price_issuer import parse_distributions
 from .price_quality import AuditError
 
@@ -26,7 +28,9 @@ def attach_issuer(archive, source):
     if source is None:
         return
     blob = Path(source).read_bytes()
-    parse_distributions(blob, SAMPLE, archive.meta["start"], archive.meta["end_inclusive"])
+    parse_distributions(
+        blob, archive_symbols(archive.meta), archive.meta["start"], archive.meta["end_inclusive"]
+    )
     (archive.folder / "issuer-distributions.xlsx").write_bytes(blob)
     archive.meta["issuer_file"] = "issuer-distributions.xlsx"
     archive.meta["issuer_sha256"] = sha(blob)
@@ -43,6 +47,7 @@ def recheck(saved, output, issuer=None):
         meta["product_type"],
         meta["start"],
         meta["end_inclusive"],
+        symbols=archive_symbols(meta),
     )
     current_version = archive.meta["source_sha256"]
     archive.meta = copy.deepcopy(meta)
@@ -75,6 +80,14 @@ def main(argv=None):
             cmd.add_argument("--exchange", choices=("AMS", "NYS", "NAS"), default="AMS")
             cmd.add_argument("--output", type=Path, default=Path("data/kis"))
             cmd.add_argument("--issuer-file", type=Path)
+            cmd.add_argument(
+                "--symbols",
+                nargs="+",
+                choices=UNIVERSE,
+                help="probe 기본 XLC XLK SPY; collect 기본 probe 대상",
+            )
+            cmd.add_argument("--start", help="양끝 포함; 기본 2020-06-01, collect는 probe 범위")
+            cmd.add_argument("--end", help="양끝 포함; 기본 2026-09-30, collect는 probe 범위")
             cmd.add_argument(
                 "--identity-source",
                 choices=("overseas", "basic-quote"),
@@ -118,9 +131,21 @@ def main(argv=None):
     evidence.add_argument("--end", default=DEFAULT_END)
     evidence.add_argument("--evidence-file", type=Path)
     evidence.add_argument("--output", type=Path, default=Path("data/kis_distribution_evidence"))
+    inventory = sub.add_parser("inventory", help="오프라인 12상품 자료·근거 현황; 수익률 계산 없음")
+    inventory.add_argument(
+        "--saved",
+        type=Path,
+        action="append",
+        default=[],
+        help="기존 수집/재검수 폴더; 여러 번 지정",
+    )
+    inventory.add_argument("--issuer-file", type=Path, help="12상품을 포함하는 저장 공식 XLSX")
+    inventory.add_argument("--start", default=DEFAULT_START)
+    inventory.add_argument("--end", default=DEFAULT_END)
+    inventory.add_argument("--output", type=Path, default=Path("data/kis_inventory"))
     diagnostic = sub.add_parser("diagnose", help="선택 API 한 번만 진단; 재시도·전체 probe 없음")
     diagnostic.add_argument("--env", choices=("real", "demo"), required=True)
-    diagnostic.add_argument("--symbol", choices=SAMPLE, default="SPY")
+    diagnostic.add_argument("--symbol", choices=UNIVERSE, default="SPY")
     diagnostic.add_argument("--exchange", choices=("AMS", "NYS", "NAS"), default="AMS")
     diagnostic.add_argument(
         "--endpoint",
@@ -132,6 +157,14 @@ def main(argv=None):
     diagnostic.add_argument("--modp", choices=("0", "1"), help="dailyprice 수정주가 옵션; 기본 0")
     args = parser.parse_args(argv)
     try:
+        if args.command == "inventory":
+            from .kis_inventory import run
+
+            result, folder = run(args.saved, args.output, args.start, args.end, args.issuer_file)
+            for ticker, item in result["symbols"].items():
+                print(f"{ticker}: {item['status']} / {item['price_rows']} / 총수익 적격성 false")
+            print("자료 현황 보고서: " + str(folder / "report.md"))
+            return 0
         if args.command == "estimate-xlc-spy-2025":
             from .kis_estimate_samples import run
 
@@ -196,18 +229,26 @@ def main(argv=None):
             print("recheck: " + ("matched" if result["recheck"]["matched"] else "different"))
         else:
             identity_source = getattr(args, "identity_source", None) or "overseas"
+            symbols = archive_symbols({"symbols": getattr(args, "symbols", None) or SAMPLE})
+            start = getattr(args, "start", None) or DEFAULT_START
+            end = getattr(args, "end", None) or DEFAULT_END
             if args.command == "collect":
                 meta = verify_archive(args.probe)
                 identity_source = meta.get("identity_source", "overseas")
                 probe_result, _ = audit_archive(args.probe, meta)
+                symbols = archive_symbols({"symbols": args.symbols or archive_symbols(meta)})
+                start, end = args.start or meta["start"], args.end or meta["end_inclusive"]
                 if (
-                    not probe_result["can_collect"]
+                    not set(symbols) <= set(probe_result["collectable_symbols"])
+                    or not meta["start"] <= start <= end <= meta["end_inclusive"]
                     or meta["environment"] != args.env
                     or meta["exchange"] != args.exchange
                     or meta["mode"] != "probe"
                     or (args.identity_source and args.identity_source != identity_source)
                 ):
                     raise KISError("matching_successful_real_probe_required")
+            if args.command != "auth":
+                price_ranges({"start": start, "end_inclusive": end, "mode": args.command})
             client = KISClient(args.env)
             if args.command == "auth":
                 client.token()
@@ -223,9 +264,10 @@ def main(argv=None):
                     args.command,
                     args.exchange,
                     product,
-                    DEFAULT_START,
-                    DEFAULT_END,
+                    start,
+                    end,
                     identity_source=identity_source,
+                    symbols=symbols,
                 )
                 if args.command == "collect":
                     archive.meta["preflight_archive"] = args.probe.name
@@ -242,6 +284,8 @@ def main(argv=None):
                 folder = archive.folder
         print(result["status"] + " / " + result["evidence_kind"])
         print("can_collect: " + str(result["can_collect"]).lower())
+        if result.get("collectable_symbols"):
+            print("수집 가능한 probe 상품: " + " ".join(result["collectable_symbols"]))
         print("검수 보고서: " + str(folder / "report.md"))
         # Probe readiness only authorizes evidence collection, not research eligibility.
         return 0 if result["can_collect"] else 2

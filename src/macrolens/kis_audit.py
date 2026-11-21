@@ -6,7 +6,14 @@ import re
 from pathlib import Path
 
 from .kis_client import KISError, public_payload
-from .kis_collect import PRICE_PAGINATION, SAMPLE, day, price_boundary_overlap, rows
+from .kis_collect import (
+    PRICE_PAGINATION,
+    archive_symbols,
+    day,
+    price_boundary_overlap,
+    price_ranges,
+    rows,
+)
 from .kis_events import KNOWN_MISSING_POLICY, review_events
 from .price_issuer import parse_distributions
 from .price_quality import trading_sessions
@@ -133,7 +140,7 @@ def audit_archive(folder, meta):
     if meta.get("issuer_file"):
         issuer = parse_distributions(
             (folder / meta["issuer_file"]).read_bytes(),
-            SAMPLE,
+            archive_symbols(meta),
             meta["start"],
             meta["end_inclusive"],
         )
@@ -142,6 +149,8 @@ def audit_archive(folder, meta):
         "evidence_kind": meta["evidence_kind"],
         "symbols": {},
         "can_collect": False,
+        "price_readiness": {},
+        "collectable_symbols": [],
         "strict_point_in_time": False,
         "total_return_eligible": False,
         "automatic_corrections": [],
@@ -151,7 +160,7 @@ def audit_archive(folder, meta):
     }
     probe_prices_ok = True
     normalized = {}
-    for ticker in SAMPLE:
+    for ticker in archive_symbols(meta):
         issues, limits = (
             [],
             [
@@ -275,9 +284,7 @@ def audit_archive(folder, meta):
             ]
         ):
             issues.append("요청 거래소와 상품 응답 거래소 대조 필요")
-        ranges = [("full", meta["start"], meta["end_inclusive"])]
-        if meta["mode"] == "probe":
-            ranges = [("recent", "2026-09-21", "2026-09-30"), ("old", "2020-06-01", "2020-06-10")]
+        ranges = price_ranges(meta)
         coverage = []
         for modp in ("0", "1"):
             for label, start, end in ranges:
@@ -311,6 +318,12 @@ def audit_archive(folder, meta):
             f["ticker"] == ticker and ("modp" in f["stream"] or f["stream"].startswith("identity"))
             for f in meta["failures"]
         )
+        price_ready &= not any(f["ticker"] == "ALL" for f in meta["failures"])
+        result["price_readiness"][ticker] = {
+            "ready": price_ready,
+            "issues": list(issues),
+            "failures": [f for f in meta["failures"] if f["ticker"] in (ticker, "ALL")],
+        }
         probe_prices_ok &= price_ready
         for failure in meta["failures"]:
             if failure["ticker"] in (ticker, "ALL"):
@@ -434,4 +447,8 @@ def audit_archive(folder, meta):
     if meta["evidence_kind"] != "real":
         result["status"] = "synthetic_only"
         result["can_collect"] = False
+    if meta["mode"] == "probe" and meta["evidence_kind"] == "real":
+        result["collectable_symbols"] = [
+            t for t, r in result["price_readiness"].items() if r["ready"]
+        ]
     return result, normalized
